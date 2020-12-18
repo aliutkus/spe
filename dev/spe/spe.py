@@ -1,73 +1,97 @@
 import torch
 from torch import nn
-import torch.nn.functional as F
-from torch.cuda.amp import autocast
-from warnings import warn
-import itertools
-import ipdb
 import math
-import numpy as np
 
 
 class SPE(nn.Module):
-    def __init__(self, dimension=1, shape=200):
+    def __init__(self, dimension=1, resolution=200):
         super(SPE, self).__init__()
 
+        # saving dimension
+        self.dimension = dimension
+
         # making the resolution a tuple if it's an int
-        if isinstance(shape, int):
-            shape = (shape,) * dimension
+        if isinstance(resolution, int):
+            resolution = (resolution,) * dimension
+
+        # window size is twice +1 the size of the PSD
+        self.window_size = [2 * d  for d in resolution]
+        self.hop_size = [d//4 for d in resolution]#resolution
 
         # initialize the psd with decaying frequencies
-        self.register_buffer('psd', SPE.smooth_psd(shape, 0.2)))
+        self.register_parameter(
+            'msd', nn.Parameter(smooth_init(resolution)))
 
-    @staticmethod
-    def smooth_psd(shape, lengthscale=0.2):
-        ticks = [torch.range(d) for d in shape]
-        frequencies = torch.stack(
-            torch.meshgrid(ticks)
+    def stft(self, x):
+        window = torch.hamming_window(
+            self.window_size[0]).to(self.msd.device)
+
+        return torch.stft(
+                    x,
+                    n_fft=self.window_size[0],
+                    hop_length=self.hop_size[0],
+                    window=window,
+                    center=True,
+                    normalized=True,
+                    onesided=True,
+                    pad_mode='reflect',
+                    return_complex=True
+                )
+    def istft(self, x, shape):
+        window = torch.hamming_window(
+            self.window_size[0]).to(self.msd.device)
+
+        return torch.istft(
+            x,
+            n_fft=self.window_size[0],
+            hop_length=self.hop_size[0],
+            window=window,
+            center=True,
+            normalized=True,
+            onesided=True,
+            length=shape[0]
         )
-        return torch.exp(
-        - torch.sum(frequencies ** 2, dim=0) * 1./4.*lengthscale**2
-        )
+
+    def forward(self, num, shape):
+        if isinstance(shape, int):
+            shape = (shape,) * self.dimension
+
+        original_shape = shape
+        shape = [max(2*d, s) for (d,s) in zip(self.window_size, shape)]
+        print(shape)
+        if self.dimension != 1:
+            raise NotImplementedError("for now SPE only works in 1d")
+
+        # draw noise of appropriate shape
+        p = torch.randn(num, *shape, device=self.msd.device)
+        
+        msd = torch.relu(self.msd)
+        msd = msd / torch.norm(msd)
+
+        print('nfft', self.window_size[0], 'hop', self.hop_size[0])
+        # compute its STFT
+        p = self.stft(p)
+
+        # filter by the magnitude spectral density
+        p = p * msd[None, :, None]
+
+        # compute istft
+        p = self.istft(p, shape=shape)
+
+        # weight by window in case of non perfect reconstruction
+        #weight = torch.ones(*shape, device=p.device)
+        #p = p / self.istft(self.stft(weight), shape=shape)[None]
+
+        #normalize to get correlations
+        p = p / torch.norm(p, dim=0)
+
+        # truncate if needed
+        p = p[[slice(s) for s in (num, ) + original_shape]]
+        return p
 
 
-def spe(shape, n_draws=1, lengthscale=0.2):
-    """Stochastic Positional Embedding
-
-    Parameters:
-    -----------
-    shape : tuple of int
-        the shape of the positional embeddings to generate
-    n_draws: int
-        the number of embeddings to generate
-    """
-    import math
-    import numpy as np
-    from torch.fft import irfftn, rfftn, stft
-
-
-    # generating nd-frequencies
-    ticks = [torch.linspace(0, 1000, 1000) for d in shape]
-    frequencies = torch.stack(
-        torch.meshgrid(ticks)
-    )
-
-    # power spectral densities on these frequencies
-    psd = torch.exp(
-        - torch.sum(frequencies ** 2, dim=0) * 1./4.*lengthscale**2
-    )
-
-    # generating random phase
-    phase = torch.exp( 2j * math.pi * torch.rand((n_draws,) + psd.shape))
-
-    # generating signals with the desired psd
-    render_shape = [d*2 for d in shape]
-    embeddings = torch.fft.irfftn(psd[None] * phase, render_shape)
-
-    # reshaping (truncate to desired shape)
-    embeddings = embeddings[[slice(0,d) for d in (n_draws, *shape)]]
-
-    # normalize
-    embeddings = embeddings - embeddings.mean(dim=0, keepdim=True)
-    embeddings = embeddings / embeddings.norm(dim=0, keepdim=True)
-    return embeddings
+def smooth_init(shape):
+    msd = torch.zeros(shape[0]+1) + 1e-3
+    L = min(msd.shape[0], 10)
+    msd[:L] = msd[:L] + torch.logspace(0, -2, L)
+    return msd
