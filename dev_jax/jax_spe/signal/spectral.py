@@ -1,6 +1,7 @@
 """Tools for spectral analysis.
 """
 
+import jax
 import jax.numpy as np
 #from . import signaltools
 from .windows import get_window
@@ -422,8 +423,14 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
     # This loop could perhaps be vectorized/strided somehow...
     for ii in range(nseg):
         # Window the ifft
-        x[..., ii*nstep:ii*nstep+nperseg] += xsubs[..., ii] * win
-        norm[..., ii*nstep:ii*nstep+nperseg] += win**2
+        x = jax.ops.index_add(
+            x, jax.ops.index[..., ii*nstep:ii*nstep+nperseg],
+            xsubs[..., ii] * win)
+        # x[..., ii*nstep:ii*nstep+nperseg] += xsubs[..., ii] * win
+        norm = jax.ops.index_add(
+            norm, jax.ops.index[..., ii*nstep:ii*nstep+nperseg],
+            win**2)
+        # norm[..., ii*nstep:ii*nstep+nperseg] += win**2
 
     # Remove extension points
     if boundary:
