@@ -55,6 +55,7 @@ class SPE(nn.Module):
             raise NotImplementedError("for now SPE only works in 1d")
 
         # draw noise of appropriate shape
+        # TODO: do not use the same key every time
         p = jax.random.normal(jax.random.PRNGKey(0), (num, *shape))
 
         msd = nn.relu(msd)
