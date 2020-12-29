@@ -371,6 +371,10 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
     else:
         nfft = int(nfft)
 
+    if nfft != nperseg:
+        # n=nfft not supported by JAX
+        raise ValueError('nfft must be equal to nperseg')
+
     if noverlap is None:
         noverlap = nperseg//2
     else:
@@ -402,7 +406,7 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
             raise ValueError('window must have length of {0}'.format(nperseg))
 
     ifunc = np.fft.irfft if input_onesided else np.fft.ifft
-    xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg, :]
+    xsubs = ifunc(Zxx, axis=-2)[..., :nperseg, :]  # n=nfft
 
     # Initialize output and normalization arrays
     outputlength = nperseg + (nseg-1)*nstep
@@ -762,16 +766,43 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
 
     .. versionadded:: 0.16.0
     """
+    if nfft != nperseg:
+        # n=nfft not supported by JAX
+        raise ValueError('nfft must be equal to nperseg')
+
     # Created strided array of data segments
     if nperseg == 1 and noverlap == 0:
         result = x[..., np.newaxis]
     else:
-        # https://stackoverflow.com/a/5568169
-        step = nperseg - noverlap
-        shape = x.shape[:-1]+((x.shape[-1]-noverlap)//step, nperseg)
-        strides = x.strides[:-1]+(step*x.strides[-1], x.strides[-1])
-        result = np.lib.stride_tricks.as_strided(x, shape=shape,
-                                                 strides=strides)
+        step = nperseg - noverlap  # hop size
+        if nperseg % step != 0:
+            raise ValueError(
+                'nperseg must be a multiple of (nperseg - noverlap)')
+
+        # Get non-overlapping segments for each shift
+        nseg = x.shape[-1] // nperseg
+        shifts = [x[..., i:i + nseg * nperseg]
+                  for i in range(0, nperseg, step)]
+        shifts = [
+            np.pad(s,
+                [(0, 0) for _ in x.shape[:-1]]
+                + [(0, nseg * nperseg - s.shape[-1])]
+            ) for s in shifts
+        ]
+        shifts = [s.reshape(*x.shape[:-1], nseg, nperseg) for s in shifts]
+        # Interleave
+        result = np.stack(shifts, axis=-2)
+        result = result.reshape(*x.shape[:-1], -1, nperseg)
+        result = result[..., :(x.shape[-1]-noverlap)//step, :]
+        assert (result.shape ==
+            x.shape[:-1]+((x.shape[-1]-noverlap)//step, nperseg))
+
+        # # https://stackoverflow.com/a/5568169
+        # step = nperseg - noverlap
+        # shape = x.shape[:-1]+((x.shape[-1]-noverlap)//step, nperseg)
+        # strides = x.strides[:-1]+(step*x.strides[-1], x.strides[-1])
+        # result = np.lib.stride_tricks.as_strided(x, shape=shape,
+        #                                          strides=strides)
 
     # Detrend each data segment individually
     result = detrend_func(result)
@@ -785,7 +816,7 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
     else:
         result = np.real(result)
         func = np.fft.rfft
-    result = func(result, n=nfft)
+    result = func(result)
 
     return result
 
