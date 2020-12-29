@@ -2,7 +2,6 @@
 """
 
 import jax.numpy as np
-from scipy import fft as sp_fft
 #from . import signaltools
 from .windows import get_window
 from .arraytools import const_ext, even_ext, odd_ext, zero_ext
@@ -402,7 +401,7 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
         if win.shape[0] != nperseg:
             raise ValueError('window must have length of {0}'.format(nperseg))
 
-    ifunc = sp_fft.irfft if input_onesided else sp_fft.ifft
+    ifunc = np.fft.irfft if input_onesided else np.fft.ifft
     xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg, :]
 
     # Initialize output and normalization arrays
@@ -696,9 +695,9 @@ def _spectral_helper(x, y, fs=1.0, window='hann', nperseg=None, noverlap=None,
         sides = 'twosided'
 
     if sides == 'twosided':
-        freqs = sp_fft.fftfreq(nfft, 1/fs)
+        freqs = np.fft.fftfreq(nfft, 1/fs)
     elif sides == 'onesided':
-        freqs = sp_fft.rfftfreq(nfft, 1/fs)
+        freqs = np.fft.rfftfreq(nfft, 1/fs)
 
     # Perform the windowed FFTs
     result = _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides)
@@ -782,10 +781,10 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
 
     # Perform the fft. Acts on last axis by default. Zero-pads automatically
     if sides == 'twosided':
-        func = sp_fft.fft
+        func = np.fft.fft
     else:
-        result = result.real
-        func = sp_fft.rfft
+        result = np.real(result)
+        func = np.fft.rfft
     result = func(result, n=nfft)
 
     return result
