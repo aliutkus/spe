@@ -64,9 +64,10 @@ class SPE(nn.Module):
 
         # draw noise of appropriate shape
         p = torch.randn(num, *shape, device=self.msd.device)
-        
+        eps = torch.finfo(p.dtype).eps
+
         msd = torch.relu(self.msd)
-        msd = msd / torch.norm(msd)
+        msd = msd / (torch.norm(msd) + eps)
 
         print('nfft', self.window_size[0], 'hop', self.hop_size[0])
         # compute its STFT
@@ -83,7 +84,7 @@ class SPE(nn.Module):
         #p = p / self.istft(self.stft(weight), shape=shape)[None]
 
         #normalize to get correlations
-        p = p / torch.norm(p, dim=0)
+        p = p / (torch.norm(p, dim=0) + eps)
 
         # truncate if needed
         p = p[[slice(s) for s in (num, ) + original_shape]]
