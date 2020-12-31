@@ -57,9 +57,10 @@ class SPE(nn.Module):
         # draw noise of appropriate shape
         # TODO: do not use the same key every time
         p = jax.random.normal(jax.random.PRNGKey(0), (num, *shape))
+        eps = jnp.finfo(p.dtype).eps
 
         msd = nn.relu(msd)
-        msd = msd / jnp.linalg.norm(msd)
+        msd = msd / (jnp.linalg.norm(msd) + eps)
 
         print('nfft', window_size[0], 'hop', hop_size[0])
         # compute its STFT
@@ -76,7 +77,7 @@ class SPE(nn.Module):
         #p = p / self.istft(self.stft(weight), shape=shape)[None]
 
         #normalize to get correlations
-        p = p / jnp.linalg.norm(p, axis=0)
+        p = p / (jnp.linalg.norm(p, axis=0) + eps)
 
         # truncate if needed
         p = p[tuple(slice(s) for s in (num, ) + original_shape)]
