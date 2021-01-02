@@ -1,32 +1,46 @@
+import math
+from typing import Tuple, Union
+
+from flax import linen as nn
 import jax
 import jax.numpy as jnp
-import numpy as np
-from flax import nn
-import math
-
+from jax import lax
 from jax_spectral import stft, istft
+import numpy as np
 
 
 class SPE(nn.Module):
+    dimension: int = 1
+    resolution: Union[int, Tuple[int]] = 200
 
-    def stft(self, x, window_size, hop_size):
+    def setup(self):
+        if isinstance(self.resolution, int) or len(self.resolution.shape) == 0:
+            self.resolution = (self.resolution,) * self.dimension
+
+        self.msd = self.param(
+            'msd', smooth_init,
+            (self.resolution[0] + 1, *self.resolution[1:]))
+        self.window_size = [2 * d  for d in self.resolution]
+        self.hop_size = [d//4 for d in self.resolution]
+
+    def stft(self, x):
         return stft(
-                    x,
-                    nperseg=window_size[0],
-                    noverlap=window_size[0] - hop_size[0],
-                    window='hamming',
-                    #center=True,
-                    #normalized=True,
-                    return_onesided=True,
-                    #pad_mode='reflect',
-                    #return_complex=True
-                )[2]
+            x,
+            nperseg=self.window_size[0],
+            noverlap=self.window_size[0] - self.hop_size[0],
+            window='hamming',
+            #center=True,
+            #normalized=True,
+            return_onesided=True,
+            #pad_mode='reflect',
+            #return_complex=True
+        )[2]
 
-    def istft(self, x, shape, window_size, hop_size):
+    def istft(self, x):
         return istft(
             x,
-            nperseg=window_size[0],
-            noverlap=window_size[0] - hop_size[0],
+            nperseg=self.window_size[0],
+            noverlap=self.window_size[0] - self.hop_size[0],
             window='hamming',
             #center=True,
             #normalized=True,
@@ -34,24 +48,11 @@ class SPE(nn.Module):
             #length=shape[0]
         )[1]
 
-    def apply(self, num, shape, dimension=1, resolution=200):
-        if isinstance(resolution, int) or len(resolution.shape) == 0:
-            resolution = (resolution,) * dimension
-
-        if isinstance(shape, int) or len(shape.shape) == 0:
-            shape = (shape,) * dimension
-
-        window_size = [2 * d  for d in resolution]
-        hop_size = [d//4 for d in resolution]
-
-        msd = self.param('msd', (resolution[0] + 1, *resolution[1:]),
-                         smooth_init)
-
+    def __call__(self, num: int, shape: Tuple[int]):
         original_shape = shape
-        # TODO: zip() doesn't work in jax.jit?
-        shape = [max(2*d, s) for (d,s) in zip(window_size, shape)]
+        shape = [max(2*d, s) for (d,s) in zip(self.window_size, shape)]
         print(shape)
-        if dimension != 1:
+        if self.dimension != 1:
             raise NotImplementedError("for now SPE only works in 1d")
 
         # draw noise of appropriate shape
@@ -59,18 +60,17 @@ class SPE(nn.Module):
         p = jax.random.normal(jax.random.PRNGKey(0), (num, *shape))
         eps = jnp.finfo(p.dtype).eps
 
-        msd = nn.relu(msd)
+        msd = nn.relu(self.msd)
         msd = msd / (jnp.linalg.norm(msd) + eps)
 
-        print('nfft', window_size[0], 'hop', hop_size[0])
         # compute its STFT
-        p = self.stft(p, window_size=window_size, hop_size=hop_size)
+        p = self.stft(p)
 
         # filter by the magnitude spectral density
         p = p * msd[None, :, None]
 
         # compute istft
-        p = self.istft(p, shape=shape, window_size=window_size, hop_size=hop_size)
+        p = self.istft(p)  # shape=shape
 
         # weight by window in case of non perfect reconstruction
         #weight = torch.ones(*shape, device=p.device)
