@@ -4,13 +4,13 @@ import numpy as np
 from flax import nn
 import math
 
-from . import signal
+from jax_spectral import stft, istft
 
 
 class SPE(nn.Module):
 
     def stft(self, x, window_size, hop_size):
-        return signal.stft(
+        return stft(
                     x,
                     nperseg=window_size[0],
                     noverlap=window_size[0] - hop_size[0],
@@ -23,7 +23,7 @@ class SPE(nn.Module):
                 )[2]
 
     def istft(self, x, shape, window_size, hop_size):
-        return signal.istft(
+        return istft(
             x,
             nperseg=window_size[0],
             noverlap=window_size[0] - hop_size[0],
