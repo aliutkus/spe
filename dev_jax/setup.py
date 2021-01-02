@@ -18,6 +18,7 @@ setup(
     long_description_content_type='text/markdown',
     packages=['jax_spe'],
     install_requires=[
-        'jax>=0.2.6'
+        'jax>=0.2.6',
+        'git+https://github.com/cifkao/jax-spectral.git@main#egg=jax-spectral'
     ],
 )
