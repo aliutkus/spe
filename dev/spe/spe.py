@@ -95,3 +95,66 @@ def smooth_init(shape):
     L = min(msd.shape[0], 10)
     msd[:L] = msd[:L] + torch.logspace(0, -2, L)
     return msd
+
+class ConvSPE(nn.Module):
+    def __init__(self, dimension=1, kernel_size=200):
+        super(ConvSPE, self).__init__()
+
+
+        if dimension==1:
+            conv_class = nn.Conv1d
+        elif dimension==2:
+            conv_class = nn.Conv2d
+        elif dimension==3:
+            conv_class = nn.Conv3d
+        else:
+            raise Exception('dimension must be 1, 2 or 3')
+
+        # making kernel_size a list of length dimension in any case
+        if isinstance(kernel_size, int):
+            kernel_size = [kernel_size,] * dimension 
+
+        # saving dimensions
+        self.dimension = dimension
+        self.kernel_size = kernel_size
+
+        # create the convolution layer
+        self.conv = conv_class(
+                        in_channels=1,
+                        out_channels=1,
+                        stride=1,
+                        kernel_size=kernel_size,
+                        padding=0,
+                        bias=False)
+
+        # smooth_init        
+        init_weight = 1.
+        for d in range(dimension):
+            win = torch.hann_window(kernel_size[d]//4)
+            index = (None, None, *((None,)*d), Ellipsis, *(None,)*(dimension-1-d))
+            init_weight = init_weight * win[index]
+        self.conv.weight.data = init_weight
+
+
+    def forward(self, num, shape):
+        if isinstance(shape, int):
+            shape = (shape,) * self.dimension
+
+        original_shape = shape
+
+        # decide on the size of the signal to generate
+        # (larger than desired to avoid border effects)
+        shape = [2 * max(d, s) for (d,s) in zip(self.kernel_size, shape)]
+        print(shape)
+
+        # draw noise of appropriate shape on the right device
+        p = torch.randn(num, 1, *shape, device=self.conv.weight.device)
+        # apply convolution
+        p = self.conv(p)[:, 0, ...]
+        #normalize to get correlations
+        p = p / torch.norm(p, dim=0)
+
+        # truncate to desired shape
+        p = p[[slice(s) for s in (num, ) + original_shape]]
+
+        return p

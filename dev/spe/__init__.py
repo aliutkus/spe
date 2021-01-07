@@ -1,1 +1,1 @@
-from .spe import SPE
+from .spe import SPE, ConvSPE
