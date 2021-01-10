@@ -1,1 +1,1 @@
-from .spe import SpectralSPE, ConvSPE, SimpleSpectralSPE
+from .spe import SpectralSPE, ConvSPE
