@@ -23,116 +23,20 @@ class SpectralSPE(nn.Module):
         """
         super(SpectralSPE, self).__init__()
 
-        # window size is twice +1 the size of the PSD
-        self.window_size = 2 * max_lag
-        self.hop_size = max_lag//4
-
         # initialize the psd with decaying frequencies
+        self.max_lag = max_lag
+        kernel = torch.zeros(dimension, 2*max_lag+1)
+        self.pos = torch.arange(max_lag, 2 * max_lag +1)
+        self.neg = torch.arange(max_lag,0,-1)
+        #kernel = torch.linspace(-10, 10, 2*max_lag).expand(dimension, 2*max_lag)
+        start =min(max_lag, 100)
+        #kernel[:, self.pos[start::20]] = 1
+        kernel[:, self.pos[:start]] = torch.linspace(1, 0, start)[None]
+        kernel[:, self.neg[:start]] = torch.linspace(1, 0, start)[None]
+        #kernel = kernel-kernel.mean(dim=1, keepdim=True)
+        kernel = kernel/kernel.norm(dim=1, keepdim=True)
         self.register_parameter(
-            'psd', nn.Parameter(smooth_init(max_lag, dimension)))
-
-    def stft(self, x):
-        window = torch.hamming_window(
-            self.window_size).to(self.psd.device)
-
-        return torch.stft(
-                    x,
-                    n_fft=self.window_size,
-                    hop_length=self.hop_size,
-                    window=window,
-                    center=True,
-                    normalized=True,
-                    onesided=True,
-                    pad_mode='reflect',
-                    return_complex=True
-                )
-    def istft(self, x, shape):
-        window = torch.hamming_window(
-            self.window_size).to(self.psd.device)
-
-        return torch.istft(
-            x,
-            n_fft=self.window_size,
-            hop_length=self.hop_size,
-            window=window,
-            center=True,
-            normalized=True,
-            onesided=True,
-            length=shape
-        )
-
-    def forward(self, queries, keys, num):
-        assert queries.shape == keys.shape, \
-            "Queries and keys should have self matching in "\
-            "current implementation of SpectralSPE"
-
-        # get shapes
-        (batchsize, n, d) = queries.shape
-
-
-        length = max(2*self.window_size, n)
-        # draw noise of appropriate shape
-        z_m = torch.randn(d, batchsize, num, length, device=self.psd.device)/math.sqrt(num)
-        z_n = torch.randn(d, batchsize, num, length, device=self.psd.device)/math.sqrt(num)
-
-        # compute its STFT
-
-        pe = {}
-        for key, z in zip(['q', 'k'], (z_n, z_m)):
-            # compute the pe
-            pe[key] = self.stft(z.view(-1, length))
-            [num_f, num_t] = pe[key].shape[-2:]
-            pe[key] = pe[key].view(d, batchsize, num, num_f, num_t)
-            
-            psd = torch.relu(self.psd[:, None, None, :, None])
-            pe[key] = pe[key] * psd
-            pe[key] = pe[key].view(-1, num_f, num_t)
-            pe[key] = self.istft(pe[key], shape = length)[:,:n]
-            pe[key] = pe[key].view(d, batchsize, num, n)
-
-        pe['q'] = pe['q'] + z_m[..., :n]
-        pe['k'] = pe['k'] + z_n[..., :n]
-
-        # making (batchsize, n, d, num)
-        pe['q'] = pe['q'].permute(1, 3, 0, 2)
-        pe['k'] = pe['k'].permute(1, 3, 0, 2)
-
-        qhat = (pe['q'] * queries[..., None]).sum(axis=-2)
-        khat = (pe['k'] * keys[..., None]).sum(axis=-2)
-
-
-        return qhat, khat
-
-class SimpleSpectralSPE(nn.Module):
-    """
-    Stochastic positional encoding: spectral method
-
-    only available for time sequences for now"""
-
-    def __init__(self, dimension=64, max_lag=200):
-        """
-        Create a Spectral SPE object.
-
-        Parameters:
-        ----------
-        dimension: int
-            the dimension for each keys/query
-        max_lag: int
-            the maximum lag handled by the encoding
-        """
-        super(SimpleSpectralSPE, self).__init__()
-
-        # initialize the psd with decaying frequencies
-        test = torch.zeros(dimension, 2*max_lag+1)
-
-        #self.register_parameter(
-        #    'kernel', nn.Parameter(torch.hamming_window(2 * max_lag + 1)))
-        #test = pad(torch.ones(max_lag//4), (7*max_lag//4+1,0))+1e-3
-        test[:,50::20] = 1.
-        #self.register_parameter(
-        #    'kernel', nn.Parameter(10.*torch.rand(2 * max_lag + 1)))
-        self.register_parameter(
-            'kernel', nn.Parameter(test))
+            'kernel', nn.Parameter(kernel))
 
     def forward(self, queries, keys, num):
         assert (queries.shape[0] == keys.shape[0]
@@ -143,106 +47,41 @@ class SimpleSpectralSPE(nn.Module):
         # get shapes
         (batchsize, m, d) = queries.shape
         n = keys.shape[1] 
-        k = self.kernel.shape[1]
 
-        # draw noise of appropriate shape
-        z_m = torch.randn(d, batchsize, num, 2*k+m+n, device=self.kernel.device)/math.sqrt(num*d)
-        z_n = torch.randn(d, batchsize, num, 2*k+m+n, device=self.kernel.device)/math.sqrt(num*d)
+        # get the kernel and take its RFFT
+        kernel = self.kernel #/ self.kernel.norm(dim=1, keepdim=True)
+        max_lag = min(self.max_lag-1, max(m,n))
+        kernel = kernel[:,self.neg[max_lag]:self.pos[max_lag]]
+        k = kernel.shape[1]
 
-        # get the kernel
-        kernel = self.kernel
-        #psd = rfft(kernel, 2*n)
-        #kernel = kernel/kernel.norm()
-        psd = {
-            'q':rfft(kernel, 2*k+m+n),
-            'k':rfft(kernel.flip(dims=(-1,)), 2*k+m+n)
-        }
+        # draw noise of appropriate shape as a PE for keys
+        pe_k = torch.randn(d, batchsize, num, 2*k+m+n, device=self.kernel.device)/math.sqrt(num*d)
+        #z = torch.randn(d, batchsize, num, k+n, device=self.kernel.device)/math.sqrt(num*d)
+        #pe_k = pad(z, (0, k+m))
 
-        pe = {}
-        for key, z, length in zip(['q', 'k'], (z_n, z_m), (m, n)):
-            # compute the pe
-            pe[key] = rfft(z.view(-1, z.shape[-1]))
-            num_f = pe[key].shape[-1]
-            pe[key] = pe[key].view(d, -1, num_f)
-            pe[key] = pe[key] * psd[key][:, None]
-            pe[key] = pe[key].view(-1, num_f)
-            pe[key] = irfft(pe[key])[..., k:(k+length)]
-            pe[key] = pe[key].view(d, batchsize, num, length)
-        
-        pe['q'] = pe['q'] + z_m[..., k:(k+m)]#zhat['k']#
-        pe['k'] = z_n[..., k:(k+n)]#zhat['q']# 
+        psd = rfft(kernel, 2*k+m+n)
+
+        pe_q = rfft(pe_k.view(-1, 2*k+m+n))
+        num_f = pe_q.shape[-1]
+        pe_q = pe_q.view(d, -1, num_f)
+        pe_q = pe_q * psd[:, None]
+        pe_q = pe_q.view(-1, num_f)
+        pe_q = irfft(pe_q)[..., k+max_lag:(k+max_lag+m)]
+
+        pe_q = pe_q.view(d, batchsize, num, m)
+        pe_k = pe_k[..., k:(k+n)]
 
         # making (batchsize, m/n, d, num)
-        pe['q'] = pe['q'].permute(1, 3, 0, 2)
-        pe['k'] = pe['k'].permute(1, 3, 0, 2)
+        pe_q = pe_q.permute(1, 3, 0, 2)
+        pe_k = pe_k.permute(1, 3, 0, 2)
 
         # sum over d after multiplying by queries and keys
-        qhat = (pe['q'] * queries[..., None]).sum(axis=-2)
-        khat = (pe['k'] * keys[..., None]).sum(axis=-2)
+        qhat = (pe_q * queries[..., None]).sum(axis=-2)
+        khat = (pe_k * keys[..., None]).sum(axis=-2)
+        qhat = qhat - qhat.mean(axis=1, keepdim=True)
+        #khat = khat - khat.mean(axis=1, keepdim=True)
 
         return qhat, khat
-
-
-def smooth_init(max_lag, dimension):
-    psd = torch.zeros(dimension, max_lag+1)
-    L = min(psd.shape[1], 5)
-    psd[:,:L] = psd[:,:L] + torch.logspace(0, -2, L)[None, :]
-    return psd
-
-
-def toeplitz_matmul(toeplitz_column, toeplitz_row, tensor):
-    """
-    Performs multiplication T * M where the matrix T is Toeplitz.
-    Args:
-        - toeplitz_column (vector n or b x n) - First column of the Toeplitz matrix T.
-        - toeplitz_row (vector n or b x n) - First row of the Toeplitz matrix T.
-        - tensor (matrix n x p or b x n x p) - Matrix or vector to multiply the Toeplitz matrix with.
-    Returns:
-        - tensor (n x p or b x n x p) - The result of the matrix multiply T * M.
-    """
-    if toeplitz_column.size() != toeplitz_row.size():
-        raise RuntimeError("c and r should have the same length (Toeplitz matrices are necessarily square).")
-
-    toeplitz_shape = torch.Size((*toeplitz_column.shape, toeplitz_row.size(-1)))
-    output_shape = broadcasting._matmul_broadcast_shape(toeplitz_shape, tensor.shape)
-    broadcasted_t_shape = output_shape[:-1] if tensor.dim() > 1 else output_shape
-
-    if tensor.ndimension() == 1:
-        tensor = tensor.unsqueeze(-1)
-    toeplitz_column = toeplitz_column.expand(*broadcasted_t_shape)
-    toeplitz_row = toeplitz_row.expand(*broadcasted_t_shape)
-    tensor = tensor.expand(*output_shape)
-
-    if not torch.equal(toeplitz_column[..., 0], toeplitz_row[..., 0]):
-        raise RuntimeError(
-            "The first column and first row of the Toeplitz matrix should have "
-            "the same first element, otherwise the value of T[0,0] is ambiguous. "
-            "Got: c[0]={} and r[0]={}".format(toeplitz_column[0], toeplitz_row[0])
-        )
-
-    if type(toeplitz_column) != type(toeplitz_row) or type(toeplitz_column) != type(tensor):
-        raise RuntimeError("The types of all inputs to ToeplitzMV must match.")
-
-    *batch_shape, orig_size, num_rhs = tensor.size()
-    r_reverse = toeplitz_row[..., 1:].flip(dims=(-1,))
-
-    c_r_rev = torch.zeros(*batch_shape, orig_size + r_reverse.size(-1), dtype=tensor.dtype, device=tensor.device)
-    c_r_rev[..., :orig_size] = toeplitz_column
-    c_r_rev[..., orig_size:] = r_reverse
-
-    temp_tensor = torch.zeros(
-        *batch_shape, 2 * orig_size - 1, num_rhs, dtype=toeplitz_column.dtype, device=toeplitz_column.device
-    )
-    temp_tensor[..., :orig_size, :] = tensor
-
-    fft_M = fft(temp_tensor.transpose(-1, -2).contiguous())
-    fft_c = fft(c_r_rev).unsqueeze(-2).expand_as(fft_M)
-    fft_product = fft_M.mul_(fft_c)
-
-    output = ifft(fft_product).real.transpose(-1, -2)
-    output = output[..., :orig_size, :]
-    return output
-
 
 class ConvSPE(nn.Module):
     def __init__(self, dimension=1, kernel_size=200):
