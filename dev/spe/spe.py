@@ -3,6 +3,7 @@ from torch import nn
 import math
 from torch.fft import rfft, irfft
 from torch.nn.functional import pad
+from gpytorch.utils.toeplitz import toeplitz_matmul
 
 class SpectralSPE(nn.Module):
     """
@@ -10,7 +11,7 @@ class SpectralSPE(nn.Module):
 
     only available for time sequences for now"""
 
-    def __init__(self, dimension=64, max_lag=200):
+    def __init__(self, dimension=64, max_lag=200, init_lengthscale=50):
         """
         Create a Spectral SPE object.
 
@@ -25,81 +26,81 @@ class SpectralSPE(nn.Module):
 
         # initialize the psd with decaying frequencies
         self.max_lag = max_lag
-        kernel = torch.zeros(dimension, 2*max_lag+1)
-        self.pos = torch.arange(max_lag, 2 * max_lag +1)
-        self.neg = torch.arange(max_lag,0,-1)
-        #kernel = torch.linspace(-10, 10, 2*max_lag).expand(dimension, 2*max_lag)
-        start =min(max_lag, 100)
-        #kernel[:, self.pos[start::20]] = 1
-        kernel[:, self.pos[:start]] = torch.linspace(1, 0, start)[None]
-        kernel[:, self.neg[:start]] = torch.linspace(1, 0, start)[None]
-        #kernel = kernel-kernel.mean(dim=1, keepdim=True)
-        kernel = kernel/kernel.norm(dim=1, keepdim=True)
-        self.register_parameter(
-            'kernel', nn.Parameter(kernel))
+        pos_lags = torch.zeros(dimension, max_lag)+1e-3
+        neg_lags = torch.zeros(dimension, max_lag)+1e-3
+        zero_lags = torch.zeros(dimension,)+1e-3
+
+        # intialize for smooth signals with a bit of noise
+        L = min(max_lag, init_lengthscale)
+        pos_lags[:, :L] = torch.linspace(1,0,L)[None]
+        neg_lags[:, :L] = torch.linspace(1,0,L)[None]
+        pos_lags = pos_lags / pos_lags.norm(dim=1, keepdim=True)
+        neg_lags = neg_lags / neg_lags.norm(dim=1, keepdim=True)
+
+        # register the parameters
+        self.register_parameter('pos_lags', nn.Parameter(pos_lags))
+        self.register_parameter('neg_lags', nn.Parameter(neg_lags))
+        self.register_parameter('zero_lags', nn.Parameter(zero_lags))
 
     def forward(self, queries, keys, num):
-        assert (queries.shape[0] == keys.shape[0]
-                and queries.shape[2] == keys.shape[2]), \
-            "Queries and keys should have shape matching except "\
-            "for length. got queries: {} and keys: {}".format(queries.shape, keys.shape)
+        """
+        Perform SPE.
+        queries and keys are (batchsize, keys_dim, sequence_length) tensors
+        output is: (batchsize, num, sequence_length)
+        """
+        assert (queries.shape == keys.shape), \
+            "As of current implementation, queries and keys must have the same shape. "\
+            "got queries: {} and keys: {}".format(queries.shape, keys.shape)
 
-        # get shapes
-        (batchsize, m, d) = queries.shape
-        n = keys.shape[1] 
+        # get shapes and draw signals a bit larger to avoid border effects
+        (batchsize, d, m) = queries.shape
+        m = m + 2*self.max_lag
+        n = keys.shape[-1] + 2*self.max_lag 
+        pe_k = torch.randn(d, n,  batchsize*num, device=self.pos_lags.device)/math.sqrt(num*d)
 
-        # get the kernel and take its RFFT
-        kernel = self.kernel #/ self.kernel.norm(dim=1, keepdim=True)
-        max_lag = min(self.max_lag-1, max(m,n))
-        kernel = kernel[:,self.neg[max_lag]:self.pos[max_lag]]
-        k = kernel.shape[1]
+        # prepare the toeplitz first row and col
+        toeplitz_first_row = self.neg_lags[:, :min(self.max_lag, n-1)]
+        toeplitz_first_row = pad(toeplitz_first_row, (1, n-1-toeplitz_first_row.shape[-1]))
+        toeplitz_first_row[:, 0] = self.zero_lags
 
-        # draw noise of appropriate shape as a PE for keys
-        pe_k = torch.randn(d, batchsize, num, 2*k+m+n, device=self.kernel.device)/math.sqrt(num*d)
-        #z = torch.randn(d, batchsize, num, k+n, device=self.kernel.device)/math.sqrt(num*d)
-        #pe_k = pad(z, (0, k+m))
+        toeplitz_first_col = self.pos_lags[:, :min(self.max_lag, m-1)]
+        toeplitz_first_col = pad(toeplitz_first_col, (1, m-1-toeplitz_first_col.shape[-1]))
+        toeplitz_first_col[:, 0] = self.zero_lags
 
-        psd = rfft(kernel, 2*k+m+n)
+        # perform toeplitz multiplication, get (d, n, batchsize * num)
+        pe_q = toeplitz_matmul(toeplitz_first_col, toeplitz_first_row, pe_k).view(d, m, batchsize, num)
+        pe_k = pe_k.view(d, n, batchsize, num)
 
-        pe_q = rfft(pe_k.view(-1, 2*k+m+n))
-        num_f = pe_q.shape[-1]
-        pe_q = pe_q.view(d, -1, num_f)
-        pe_q = pe_q * psd[:, None]
-        pe_q = pe_q.view(-1, num_f)
-        pe_q = irfft(pe_q)[..., k+max_lag:(k+max_lag+m)]
+        # truncate to get appropriate shapes
+        pe_q = pe_q[:,self.max_lag:(self.max_lag + keys.shape[-1])]
+        pe_k = pe_k[:,self.max_lag:(self.max_lag + keys.shape[-1])]
 
-        pe_q = pe_q.view(d, batchsize, num, m)
-        pe_k = pe_k[..., k:(k+n)]
-
-        # making (batchsize, m/n, d, num)
-        pe_q = pe_q.permute(1, 3, 0, 2)
-        pe_k = pe_k.permute(1, 3, 0, 2)
+        # making (batchsize, num, d, m/n)
+        pe_q = pe_q.permute(2, 3, 0, 1)
+        pe_k = pe_k.permute(2, 3, 0, 1)
 
         # sum over d after multiplying by queries and keys
-        qhat = (pe_q * queries[..., None]).sum(axis=-2)
-        khat = (pe_k * keys[..., None]).sum(axis=-2)
-        qhat = qhat - qhat.mean(axis=1, keepdim=True)
-        #khat = khat - khat.mean(axis=1, keepdim=True)
+        qhat = (pe_q * queries[:, None]).sum(axis=2)
+        khat = (pe_k * keys[:, None]).sum(axis=2)
 
         return qhat, khat
 
 class ConvSPE(nn.Module):
-    def __init__(self, dimension=1, kernel_size=200):
+    def __init__(self, rank=1, dimension=64, kernel_size=200):
         super(ConvSPE, self).__init__()
 
-
-        if dimension==1:
+        if rank==1:
             conv_class = nn.Conv1d
-        elif dimension==2:
+        elif rank==2:
             conv_class = nn.Conv2d
-        elif dimension==3:
+        elif rank==3:
             conv_class = nn.Conv3d
         else:
-            raise Exception('dimension must be 1, 2 or 3')
+            raise Exception('rank must be 1, 2 or 3')
 
         # making kernel_size a list of length dimension in any case
         if isinstance(kernel_size, int):
-            kernel_size = [kernel_size,] * dimension 
+            kernel_size = [kernel_size,] * rank 
 
         # saving dimensions
         self.dimension = dimension
@@ -107,41 +108,67 @@ class ConvSPE(nn.Module):
 
         # create the convolution layer
         self.conv = conv_class(
-                        in_channels=1,
-                        out_channels=1,
+                        in_channels=dimension,
+                        out_channels=dimension,
                         stride=1,
                         kernel_size=kernel_size,
                         padding=0,
-                        bias=False)
+                        bias=False,
+                        groups=dimension)
 
         # smooth_init        
         init_weight = 1.
-        for d in range(dimension):
-            win = torch.hann_window(kernel_size[d]//4)
-            index = (None, None, *((None,)*d), Ellipsis, *(None,)*(dimension-1-d))
+        for d in range(rank):
+            win = torch.hann_window(kernel_size[d])
+            win[kernel_size[d]//2] = 0
+            index = (None, None, *((None,)*d), Ellipsis, *(None,)*(rank-1-d))
             init_weight = init_weight * win[index]
-        self.conv.weight.data = init_weight
+        init_weight = init_weight / torch.sqrt(init_weight.norm())
+        self.conv.weight.data = init_weight.repeat(dimension, 1, *((1,)*rank))
 
 
-    def forward(self, num, shape):
-        if isinstance(shape, int):
-            shape = (shape,) * self.dimension
+    def forward(self, queries, keys, num):
+        """
+        perform SPE. 
+        queries and keys are (batchsize, keys_dim, *shape) tensors
+        output is: (batchsize, num, *shape)
+        """
+        assert (queries.shape == keys.shape), \
+            "As of current implementation, queries and keys must have the same shape. "\
+            "got queries: {} and keys: {}".format(queries.shape, keys.shape)
 
-        original_shape = shape
+
+        batchsize = queries.shape[0] 
+        d = queries.shape[1]
+        original_shape = queries.shape[2:]
 
         # decide on the size of the signal to generate
         # (larger than desired to avoid border effects)
-        shape = [2 * max(d, s) for (d,s) in zip(self.kernel_size, shape)]
-        print(shape)
+        shape = [2*k+s for (k,s) in zip(self.kernel_size, original_shape)]
+        #shape = [2 * max(d, s) for (d,s) in zip(self.kernel_size, original_shape)]
 
         # draw noise of appropriate shape on the right device
-        p = torch.randn(num, 1, *shape, device=self.conv.weight.device)
-        # apply convolution
-        p = self.conv(p)[:, 0, ...]
-        #normalize to get correlations
-        p = p / torch.norm(p, dim=0)
+        pe_k = torch.randn(batchsize * num, self.dimension, *shape, device=self.conv.weight.device) / math.sqrt(num*d)
+
+        # apply convolution, get (batchsize*num, d, *shape)
+        pe_q = self.conv(pe_k)
 
         # truncate to desired shape
-        p = p[[slice(s) for s in (num, ) + original_shape]]
+        for dim in range(len(shape)):
+            k = self.kernel_size[dim]
+            s = original_shape[dim]
+            indices_k = [slice(batchsize*num), slice(self.dimension)] + [slice(k//2, s+k//2, 1),]
+            indices_q = [slice(batchsize*num), slice(self.dimension)] + [slice(0, s, 1),]
+            pe_k = pe_k[indices_k]
+            pe_q = pe_q[indices_q]
 
-        return p
+        # making (batchsize, num, d, *shape)
+        pe_k = pe_k.view(batchsize, num, d, *original_shape)
+        pe_q = pe_q.view(batchsize, num, d, *original_shape)
+
+
+        # sum over d after multiplying by queries and keys
+        qhat = (pe_q * queries[:, None]).sum(axis=2)
+        khat = (pe_k * keys[:, None]).sum(axis=2)
+
+        return qhat, khat
