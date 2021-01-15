@@ -2,29 +2,30 @@ import torch
 from torch import nn
 import math
 
+
 class ConvSPE(nn.Module):
     def __init__(
-            self,
-            dim=1,
-            num_heads=8,
-            keys_dim=64,
-            kernel_size=200,
-            num_realizations=256
-        ):
+        self,
+        dim=1,
+        num_heads=8,
+        keys_dim=64,
+        kernel_size=200,
+        num_realizations=256
+    ):
         super(ConvSPE, self).__init__()
 
-        if dim==1:
+        if dim == 1:
             conv_class = nn.Conv1d
-        elif dim==2:
+        elif dim == 2:
             conv_class = nn.Conv2d
-        elif dim==3:
+        elif dim == 3:
             conv_class = nn.Conv3d
         else:
             raise Exception('rank must be 1, 2 or 3')
 
         # making kernel_size a list of length dimension in any case
         if isinstance(kernel_size, int):
-            kernel_size = [kernel_size,] * dim 
+            kernel_size = [kernel_size, ] * dim
 
         # saving dimensions
         self.dim = dim
@@ -35,21 +36,21 @@ class ConvSPE(nn.Module):
 
         # create the two convolution layers
         self.conv_q = conv_class(
-                        in_channels=num_heads * keys_dim,
-                        out_channels=num_heads * keys_dim,
-                        stride=1,
-                        kernel_size=kernel_size,
-                        padding=0,
-                        bias=False,
-                        groups=num_heads * keys_dim)
+            in_channels=num_heads * keys_dim,
+            out_channels=num_heads * keys_dim,
+            stride=1,
+            kernel_size=kernel_size,
+            padding=0,
+            bias=False,
+            groups=num_heads * keys_dim)
         self.conv_k = conv_class(
-                        in_channels=num_heads * keys_dim,
-                        out_channels=num_heads * keys_dim,
-                        stride=1,
-                        kernel_size=kernel_size,
-                        padding=0,
-                        bias=False,
-                        groups=num_heads * keys_dim)
+            in_channels=num_heads * keys_dim,
+            out_channels=num_heads * keys_dim,
+            stride=1,
+            kernel_size=kernel_size,
+            padding=0,
+            bias=False,
+            groups=num_heads * keys_dim)
 
         # random init
         self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
@@ -68,10 +69,9 @@ class ConvSPE(nn.Module):
         self.conv_q.weight.data = init_weight.clone()
         self.conv_k.weight.data = init_weight.clone()
 
-
     def forward(self, queries, keys):
         """
-        perform SPE. 
+        perform SPE.
         queries and keys are (batchsize, *shape, num_heads, keys_dim) tensors
         output is: (batchsize, *shape, num_heads, num_realizations)
         """
@@ -79,19 +79,20 @@ class ConvSPE(nn.Module):
             "As of current implementation, queries and keys must have the same shape. "\
             "got queries: {} and keys: {}".format(queries.shape, keys.shape)
 
-
         batchsize = queries.shape[0]
 
         # making queries and keys (batchsize, num_heads, keys_dim, *shape)
-        queries = queries.permute(0, self.dim + 1, self.dim + 2, *[d for d in range(1, self.dim + 1)])
-        keys = keys.permute(0, self.dim + 1, self.dim + 2, *[d for d in range(1, self.dim + 1)])
+        queries = queries.permute(
+            0, self.dim + 1, self.dim + 2, *[d for d in range(1, self.dim + 1)])
+        keys = keys.permute(0, self.dim + 1, self.dim + 2,
+                            *[d for d in range(1, self.dim + 1)])
 
-        #d = queries.shape[1] #d=num_heads*keys_dim
+        # d = queries.shape[1] #d=num_heads*keys_dim
         original_shape = queries.shape[3:]
 
         # decide on the size of the signal to generate
         # (larger than desired to avoid border effects)
-        shape = [4*k+s for (k,s) in zip(self.kernel_size, original_shape)]
+        shape = [4*k+s for (k, s) in zip(self.kernel_size, original_shape)]
 
         # draw noise of appropriate shape on the right device
         z = torch.randn(
@@ -109,36 +110,36 @@ class ConvSPE(nn.Module):
             k = self.kernel_size[dim]
             s = original_shape[dim]
 
-            indices = [slice(batchsize*self.num_realizations), slice(self.num_heads*self.keys_dim)] + [slice(k, k+s, 1),]
+            indices = [slice(batchsize*self.num_realizations),
+                       slice(self.num_heads*self.keys_dim)] + [slice(k, k+s, 1), ]
             pe_k = pe_k[indices]
             pe_q = pe_q[indices]
 
-
         # making (batchsize, num_realizations, num_heads, keys_dim, *shape)
-        pe_k = pe_k.view(batchsize, self.num_realizations, self.num_heads, self.keys_dim, *original_shape)
-        pe_q = pe_q.view(batchsize, self.num_realizations, self.num_heads, self.keys_dim, *original_shape)
-
+        pe_k = pe_k.view(batchsize, self.num_realizations,
+                         self.num_heads, self.keys_dim, *original_shape)
+        pe_q = pe_q.view(batchsize, self.num_realizations,
+                         self.num_heads, self.keys_dim, *original_shape)
 
         # sum over d after multiplying by queries and keys
         qhat = (pe_q * queries[:, None]).sum(axis=3)
         khat = (pe_k * keys[:, None]).sum(axis=3)
 
-        #qhat are (batchsize, num_realizations, num_heads, *shape), making them (batchsize, *shape, num_heads, num_realizations)
+        # qhat are (batchsize, num_realizations, num_heads, *shape), making them (batchsize, *shape, num_heads, num_realizations)
         qhat = qhat.permute(0, *[x for x in range(3, self.dim+3)], 2, 1)
         khat = khat.permute(0, *[x for x in range(3, self.dim+3)], 2, 1)
 
         return qhat, khat
 
 
-    
 class SineSPE(nn.Module):
     def __init__(
-            self,
-            num_heads=8,
-            keys_dim=64,
-            num_sines=10,
-            num_realizations=256
-        ):
+        self,
+        num_heads=8,
+        keys_dim=64,
+        num_sines=10,
+        num_realizations=256
+    ):
         super(SineSPE, self).__init__()
 
         # saving dimensions
@@ -160,17 +161,15 @@ class SineSPE(nn.Module):
                 )
             )
 
-
     def forward(self, queries, keys):
         """
-        perform sinusoidal SPE. 
+        perform sinusoidal SPE.
         queries and keys are (batchsize, length, num_heads, keys_dim) tensors
         output is: (batchsize, length, num_heads, num_realizations)
         """
         assert (queries.shape == keys.shape), \
             "As of current implementation, queries and keys must have the same shape. "\
             "got queries: {} and keys: {}".format(queries.shape, keys.shape)
-
 
         batchsize = queries.shape[0]
         length = queries.shape[1]
@@ -184,7 +183,7 @@ class SineSPE(nn.Module):
 
         phases_q = (
             2 * math.pi
-            * freqs *  indices[None, None, :, None]
+            * freqs * indices[None, None, :, None]
             + self.offsets[:, :, None, :]
         )
         omega_q = torch.stack([torch.cos(phases_q), torch.sin(phases_q)], dim=-1).view(
@@ -193,7 +192,7 @@ class SineSPE(nn.Module):
 
         phases_k = (
             2 * math.pi
-            * freqs *  indices[None, None, :, None]
+            * freqs * indices[None, None, :, None]
         )
         omega_k = torch.stack([torch.cos(phases_k), torch.sin(phases_k)], dim=-1).view(
             self.num_heads, self.keys_dim, length, 2*self.num_sines
@@ -204,7 +203,8 @@ class SineSPE(nn.Module):
 
         # draw noise of appropriate shape on the right device
         z = torch.randn(
-            batchsize, self.num_heads, self.keys_dim, 2*self.num_sines, self.num_realizations,
+            batchsize, self.num_heads, self.keys_dim, 2 * self.num_sines,
+            self.num_realizations,
             device=self.freqs.device) / math.sqrt(self.num_realizations * self.keys_dim)
 
         # scale each of the 2*num_sines by the appropriate gain
