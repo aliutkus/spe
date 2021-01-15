@@ -6,7 +6,7 @@ import math
 class ConvSPE(nn.Module):
     def __init__(
         self,
-        dim=1,
+        ndim=1,
         num_heads=8,
         keys_dim=64,
         kernel_size=200,
@@ -14,21 +14,21 @@ class ConvSPE(nn.Module):
     ):
         super(ConvSPE, self).__init__()
 
-        if dim == 1:
+        if ndim == 1:
             conv_class = nn.Conv1d
-        elif dim == 2:
+        elif ndim == 2:
             conv_class = nn.Conv2d
-        elif dim == 3:
+        elif ndim == 3:
             conv_class = nn.Conv3d
         else:
             raise Exception('rank must be 1, 2 or 3')
 
         # making kernel_size a list of length dimension in any case
         if isinstance(kernel_size, int):
-            kernel_size = [kernel_size, ] * dim
+            kernel_size = [kernel_size, ] * ndim
 
         # saving dimensions
-        self.dim = dim
+        self.ndim = ndim
         self.keys_dim = keys_dim
         self.num_heads = num_heads
         self.kernel_size = kernel_size
@@ -83,9 +83,9 @@ class ConvSPE(nn.Module):
 
         # making queries and keys (batchsize, num_heads, keys_dim, *shape)
         queries = queries.permute(
-            0, self.dim + 1, self.dim + 2, *[d for d in range(1, self.dim + 1)])
-        keys = keys.permute(0, self.dim + 1, self.dim + 2,
-                            *[d for d in range(1, self.dim + 1)])
+            0, self.ndim + 1, self.ndim + 2, *[d for d in range(1, self.ndim + 1)])
+        keys = keys.permute(0, self.ndim + 1, self.ndim + 2,
+                            *[d for d in range(1, self.ndim + 1)])
 
         # d = queries.shape[1] #d=num_heads*keys_dim
         original_shape = queries.shape[3:]
@@ -126,8 +126,8 @@ class ConvSPE(nn.Module):
         khat = (pe_k * keys[:, None]).sum(axis=3)
 
         # qhat are (batchsize, num_realizations, num_heads, *shape), making them (batchsize, *shape, num_heads, num_realizations)
-        qhat = qhat.permute(0, *[x for x in range(3, self.dim+3)], 2, 1)
-        khat = khat.permute(0, *[x for x in range(3, self.dim+3)], 2, 1)
+        qhat = qhat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
+        khat = khat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
 
         return qhat, khat
 
