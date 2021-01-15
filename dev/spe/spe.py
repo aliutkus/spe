@@ -176,7 +176,7 @@ class SineSPE(nn.Module):
 
         # build omega_q and omega_k,
         # with shape (num_heads, keys_dim, length, 2*num_sines)
-        indices = torch.linspace(0, length-1, length)
+        indices = torch.linspace(0, length-1, length, device=self.freqs.device)
 
         # making sure the frequencies are in [0, 0.5]
         freqs = torch.sigmoid(self.freqs[:, :, None, :])/2.
