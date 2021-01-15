@@ -52,8 +52,8 @@ class ConvSPE(nn.Module):
                         groups=num_heads * keys_dim)
 
         # random init
-        self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)#init_weight.clone()
-        self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)#init_weight.clone()
+        self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
+        self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)
 
         return
 
@@ -65,6 +65,8 @@ class ConvSPE(nn.Module):
             init_weight = init_weight * win[index]
         init_weight = init_weight / torch.sqrt(init_weight.norm())
         init_weight = init_weight.repeat(keys_dim * num_heads, 1, *((1,)*dim))
+        self.conv_q.weight.data = init_weight.clone()
+        self.conv_k.weight.data = init_weight.clone()
 
 
     def forward(self, queries, keys):
@@ -124,5 +126,101 @@ class ConvSPE(nn.Module):
         #qhat are (batchsize, num_realizations, num_heads, *shape), making them (batchsize, *shape, num_heads, num_realizations)
         qhat = qhat.permute(0, *[x for x in range(3, self.dim+3)], 2, 1)
         khat = khat.permute(0, *[x for x in range(3, self.dim+3)], 2, 1)
+
+        return qhat, khat
+
+
+    
+class SineSPE(nn.Module):
+    def __init__(
+            self,
+            num_heads=8,
+            keys_dim=64,
+            num_sines=10,
+            num_realizations=256
+        ):
+        super(SineSPE, self).__init__()
+
+        # saving dimensions
+        self.num_heads = num_heads
+        self.keys_dim = keys_dim
+        self.num_sines = num_sines
+        self.num_realizations = num_realizations
+
+        # register the parameter
+        for param in ['freqs', 'offsets', 'gains']:
+            self.register_parameter(
+                param,
+                nn.Parameter(
+                    torch.randn(
+                        num_heads,
+                        keys_dim,
+                        num_sines
+                    )
+                )
+            )
+
+
+    def forward(self, queries, keys):
+        """
+        perform sinusoidal SPE. 
+        queries and keys are (batchsize, length, num_heads, keys_dim) tensors
+        output is: (batchsize, length, num_heads, num_realizations)
+        """
+        assert (queries.shape == keys.shape), \
+            "As of current implementation, queries and keys must have the same shape. "\
+            "got queries: {} and keys: {}".format(queries.shape, keys.shape)
+
+
+        batchsize = queries.shape[0]
+        length = queries.shape[1]
+
+        # build omega_q and omega_k,
+        # with shape (num_heads, keys_dim, length, 2*num_sines)
+        indices = torch.linspace(0, length-1, length)
+
+        # making sure the frequencies are in [0, 0.5]
+        freqs = torch.sigmoid(self.freqs[:, :, None, :])/2.
+
+        phases_q = (
+            2 * math.pi
+            * freqs *  indices[None, None, :, None]
+            + self.offsets[:, :, None, :]
+        )
+        omega_q = torch.stack([torch.cos(phases_q), torch.sin(phases_q)], dim=-1).view(
+            self.num_heads, self.keys_dim, length, 2*self.num_sines
+        )
+
+        phases_k = (
+            2 * math.pi
+            * freqs *  indices[None, None, :, None]
+        )
+        omega_k = torch.stack([torch.cos(phases_k), torch.sin(phases_k)], dim=-1).view(
+            self.num_heads, self.keys_dim, length, 2*self.num_sines
+        )
+
+        # gains is (num_heads, keys_dim, 2*num_sines). Making then nonnegative with softplus
+        gains = nn.functional.softplus(self.gains).repeat(1, 1, 2)
+
+        # draw noise of appropriate shape on the right device
+        z = torch.randn(
+            batchsize, self.num_heads, self.keys_dim, 2*self.num_sines, self.num_realizations,
+            device=self.freqs.device) / math.sqrt(self.num_realizations * self.keys_dim)
+
+        # scale each of the 2*num_sines by the appropriate gain
+        # z is still (batchsize, num_heads, keys_dim, 2*num_sines, num_realizations)
+        z = z * gains[None, ..., None]
+
+        # computing the sum over the sines. gets (batchsize, num_heads, keys_dim, length, num_realizations)
+        qbar = torch.matmul(omega_q[None], z)
+        kbar = torch.matmul(omega_k[None], z)
+
+        # permuting them to be (batchsize, length, num_heads, keys_dim, num_realizations)
+        qbar = qbar.permute(0, 3, 1, 2, 4)
+        kbar = kbar.permute(0, 3, 1, 2, 4)
+
+        # sum over the keys_dim after multiplying by queries and keys
+        qhat = (qbar * queries[..., None]).sum(axis=-2)
+        khat = (kbar * keys[..., None]).sum(axis=-2)
 
         return qhat, khat
