@@ -1,6 +1,8 @@
+import math
+from typing import Tuple, Union
+
 import torch
 from torch import nn
-import math
 
 
 class ConvSPE(nn.Module):
@@ -22,11 +24,11 @@ class ConvSPE(nn.Module):
 
     def __init__(
         self,
-        ndim=1,
-        num_heads=8,
-        in_features=64,
-        num_realizations=256,
-        kernel_size=200
+        ndim: int = 1,
+        num_heads: int = 8,
+        in_features: int = 64,
+        num_realizations: int = 256,
+        kernel_size: Union[int, Tuple[int, ...]] = 200
     ):
         super(ConvSPE, self).__init__()
 
@@ -41,7 +43,7 @@ class ConvSPE(nn.Module):
 
         # making kernel_size a list of length dimension in any case
         if isinstance(kernel_size, int):
-            kernel_size = [kernel_size, ] * ndim
+            kernel_size = (kernel_size,) * ndim
 
         # saving dimensions
         self.ndim = ndim
@@ -76,16 +78,19 @@ class ConvSPE(nn.Module):
 
         # smooth init
         init_weight = 1.
-        for d in range(dim):
+        for d in range(ndim):
             win = torch.hann_window(kernel_size[d])
-            index = (None, None, *((None,)*d), Ellipsis, *(None,)*(dim-1-d))
+            index = (None, None, *((None,)*d), Ellipsis, *(None,)*(ndim-1-d))
             init_weight = init_weight * win[index]
         init_weight = init_weight / torch.sqrt(init_weight.norm())
-        init_weight = init_weight.repeat(keys_dim * num_heads, 1, *((1,)*dim))
+        init_weight = init_weight.repeat(
+            in_features * num_heads, 1, *((1,)*ndim))
         self.conv_q.weight.data = init_weight.clone()
         self.conv_k.weight.data = init_weight.clone()
 
-    def forward(self, queries, keys):
+    def forward(
+        self, queries: torch.Tensor, keys: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Perform SPE.
 
@@ -179,10 +184,10 @@ class SineSPE(nn.Module):
 
     def __init__(
         self,
-        num_heads=8,
-        in_features=64,
-        num_realizations=256,
-        num_sines=10,
+        num_heads: int = 8,
+        in_features: int = 64,
+        num_realizations: int = 256,
+        num_sines: int = 10,
     ):
         super(SineSPE, self).__init__()
 
@@ -205,7 +210,9 @@ class SineSPE(nn.Module):
                 )
             )
 
-    def forward(self, queries, keys):
+    def forward(
+        self, queries: torch.Tensor, keys: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Perform sinusoidal SPE.
 
@@ -284,5 +291,5 @@ class SineSPE(nn.Module):
         return qhat, khat
 
 
-def _split_features(x: torch.Tensor, num_positional: int):
+def _split_features(x: torch.Tensor, num_positional: int) -> torch.Tensor:
     return x.split([num_positional, x.shape[-1] - num_positional], dim=-1)
