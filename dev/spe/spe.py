@@ -272,17 +272,10 @@ class SineSPE(nn.Module):
         # z is still (batchsize, num_heads, keys_dim, 2*num_sines, num_realizations)
         z = z * gains[None, ..., None]
 
-        # computing the sum over the sines. gets (batchsize, num_heads, keys_dim, length, num_realizations)
-        qbar = torch.matmul(omega_q[None], z)
-        kbar = torch.matmul(omega_k[None], z)
-
-        # permuting them to be (batchsize, length, num_heads, keys_dim, num_realizations)
-        qbar = qbar.permute(0, 3, 1, 2, 4)
-        kbar = kbar.permute(0, 3, 1, 2, 4)
-
-        # sum over the keys_dim after multiplying by queries and keys
-        qhat = (qbar * queries[..., None]).sum(axis=-2)
-        khat = (kbar * keys[..., None]).sum(axis=-2)
+        # multiplying z with omega, summing over the sines (l),
+        # multiplying with queries, summing over key_dim (r)
+        qhat = torch.einsum('bhdlr,hdnl,bnhd->bnhr', z, omega_q, queries)
+        khat = torch.einsum('bhdlr,hdnl,bnhd->bnhr', z, omega_k, keys)
 
         # concatenate with the non-positional part of keys and queries
         qhat = torch.cat([qhat, queries_rest], dim=-1)
