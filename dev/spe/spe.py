@@ -94,7 +94,7 @@ class ConvSPE(nn.Module):
         """
         Reset noise.
             at training, this is typically done for each new batch.
-            at testing, this is typically never done 
+            at testing, this is typically never done
         """
         self.qbar = None
         self.kbar = None
@@ -134,7 +134,7 @@ class ConvSPE(nn.Module):
         desired_shape = (queries.shape[0], self.num_realizations, *queries.shape[1:])
         if self.qbar is None or self.qbar.shape != desired_shape:
             self._draw_noise(queries)
- 
+
         # sum over d after multiplying by queries and keys
         qhat = (self.qbar * queries[:, None]).sum(axis=3)
         khat = (self.kbar * keys[:, None]).sum(axis=3)
@@ -245,7 +245,7 @@ class SineSPE(nn.Module):
         """
         Reset noise.
             at training, this is typically done for each new batch.
-            at testing, this is typically never done 
+            at testing, this is typically never done
         """
         self.qbar = None
         self.kbar = None
@@ -284,14 +284,9 @@ class SineSPE(nn.Module):
         if self.qbar is None or self.qbar.shape != desired_shape:
             self._draw_noise(queries)
 
-
         # sum over the keys_dim after multiplying by queries and keys
         qhat = (self.qbar * queries[..., None]).sum(axis=-2)
         khat = (self.kbar * keys[..., None]).sum(axis=-2)
-
-        # multiplying qbar with queries, summing over key_dim (r). same for keys
-        qhat = torch.einsum('bhdnr,bnhd->bnhr', self.qbar, queries)
-        khat = torch.einsum('bhdnr,bnhd->bnhr', self.kbar, keys)
 
         # concatenate with the non-positional part of keys and queries
         qhat = torch.cat([qhat, queries_rest], dim=-1)
@@ -347,7 +342,7 @@ class SineSPE(nn.Module):
         # z is still (batchsize, num_heads, keys_dim, 2*num_sines, num_realizations)
         z = z * gains[None, ..., None]
 
-        # computing the sum over the sines. 
+        # computing the sum over the sines.
         # gets (batchsize, num_heads, keys_dim, length, num_realizations)
         self.qbar = torch.matmul(omega_q[None], z)
         self.kbar = torch.matmul(omega_k[None], z)
