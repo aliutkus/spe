@@ -316,6 +316,8 @@ class SineSPE(nn.Module):
         Generate the random QBar and Kbar, depending on the parameters,
         and store them in the module.
         """
+        if self._key_shape is None:
+            raise RuntimeError('`key_shape` is not set. Please call `reset()` first')
 
         batchsize = 1 if self._share_in_batch else self._key_shape[0]
         length = self._key_shape[1]
