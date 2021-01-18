@@ -1,5 +1,5 @@
 import math
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -205,6 +205,10 @@ class SineSPE(nn.Module):
         num_realizations: The number of realizations of the stochastic
             process (R).
         num_sines: The number of sin and cos components (K).
+        key_shape: The expected shape of keys and queries. Needs to be
+            set either here, or by calling `reset()`.
+        share_in_batch: Whether to share the same set of
+            positional encodings for all examples in the batch.
     """
 
     def __init__(
@@ -213,6 +217,8 @@ class SineSPE(nn.Module):
         in_features: int = 64,
         num_realizations: int = 256,
         num_sines: int = 10,
+        key_shape: Optional[Tuple[int, ...]] = None,
+        share_in_batch: bool = True,
     ):
         super(SineSPE, self).__init__()
 
@@ -239,16 +245,27 @@ class SineSPE(nn.Module):
         self.freqs.data[...] -= 5.
 
         # reset qbar and kbar
-        self.reset()
+        self.reset(key_shape, share_in_batch)
 
-    def reset(self):
+    def reset(self,
+              key_shape: Tuple[int, ...],
+              share_in_batch: Optional[bool] = None):
         """
-        Reset noise.
-            at training, this is typically done for each new batch.
-            at testing, this is typically never done
+        Reset positional encodings.
+
+        At training, this is typically done for each new batch.
+        At testing, this is typically never done.
+
+        Args:
+            key_shape: The expected shape of keys and queries.
+            share_in_batch: Whether to share the same set of
+                positional encodings for all examples in the batch.
         """
         self.qbar = None
         self.kbar = None
+        self._key_shape = key_shape
+        if share_in_batch is not None:
+            self._share_in_batch = share_in_batch
 
     def forward(
         self, queries: torch.Tensor, keys: torch.Tensor
@@ -272,21 +289,21 @@ class SineSPE(nn.Module):
         queries, queries_rest = _split_features(queries, self.in_features)
         keys, keys_rest = _split_features(keys, self.in_features)
 
-        # Qbar and Kbar should be
-        # gets (batchsize, num_heads, keys_dim, length, num_realizations)
-        # if it's not the case, draw them anew. If it's the case, we keep them.
-        (batchsize, length,num_heads, keys_dim) = queries.shape
-
-        # [einsum] this is without the permute at the end of drawnoise
-        # desired_shape = (batchsize, num_heads, keys_dim, length, self.num_realizations)
-
-        desired_shape = (batchsize, length, num_heads, keys_dim, self.num_realizations)
-        if self.qbar is None or self.qbar.shape != desired_shape:
-            self._draw_noise(queries)
+        if self.qbar is None:
+            self._draw_noise()
+        desired_shape = (*queries.shape, self.num_realizations)
+        if self.qbar.shape[2:] != desired_shape[2:]:
+            raise RuntimeError(f'Positional encodings have shape {self.qbar.shape}, '
+                               f'but expected {desired_shape} '
+                               f'(queries have shape {queries.shape})')
+        length = queries.shape[1]
+        if self.qbar.shape[1] < length:
+            raise RuntimeError(f'Positional encodings have length {self.qbar.shape[1]}, '
+                               f'but expected at least {length}')
 
         # sum over the keys_dim after multiplying by queries and keys
-        qhat = (self.qbar * queries[..., None]).sum(axis=-2)
-        khat = (self.kbar * keys[..., None]).sum(axis=-2)
+        qhat = (self.qbar[:, :length] * queries[..., None]).sum(axis=-2)
+        khat = (self.kbar[:, :length] * keys[..., None]).sum(axis=-2)
 
         # concatenate with the non-positional part of keys and queries
         qhat = torch.cat([qhat, queries_rest], dim=-1)
@@ -294,16 +311,14 @@ class SineSPE(nn.Module):
 
         return qhat, khat
 
-    def _draw_noise(self, queries):
+    def _draw_noise(self):
         """
-        generate the random QBar and Kbar, depending on the parameters,
+        Generate the random QBar and Kbar, depending on the parameters,
         and store them in the module.
-        Args:
-            queries: (batchsize, length, num_heads, keys_dim)
         """
 
-        batchsize = queries.shape[0]
-        length = queries.shape[1]
+        batchsize = 1 if self._share_in_batch else self._key_shape[0]
+        length = self._key_shape[1]
 
         # build omega_q and omega_k,
         # with shape (num_heads, keys_dim, length, 2*num_sines)
