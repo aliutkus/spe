@@ -163,8 +163,8 @@ class ConvSPE(nn.Module):
             device=self.conv_q.weight.device) / math.sqrt(self.num_realizations * self.in_features)
 
         # apply convolution, get (batchsize*num_realizations, num_heads*keys_dim, *shape)
-        self.qbar = self.conv_k(z)
         self.kbar = self.conv_q(z)
+        self.qbar = self.conv_k(z)
 
         # truncate to desired shape
         for dim in range(len(shape)):
@@ -227,6 +227,8 @@ class SineSPE(nn.Module):
                 )
             )
 
+        # bias initial frequencies to low values for long term range
+        self.freqs.data[...] -= 5.
         # int the qbar and kbar as None
         self.qbar = None
         self.kbar = None
@@ -257,9 +259,18 @@ class SineSPE(nn.Module):
         # gets (batchsize, num_heads, keys_dim, length, num_realizations)
         # if it's not the case, draw them anew. If it's the case, we keep them.
         (batchsize, length,num_heads, keys_dim) = queries.shape
-        desired_shape = (batchsize, num_heads, keys_dim, length, self.num_realizations)
+
+        # [einsum] this is without the permute at the end of drawnoise
+        # desired_shape = (batchsize, num_heads, keys_dim, length, self.num_realizations)
+
+        desired_shape = (batchsize, length, num_heads, keys_dim, self.num_realizations)
         if self.qbar is None or self.qbar.shape != desired_shape:
             self._draw_noise(queries)
+
+
+        # sum over the keys_dim after multiplying by queries and keys
+        qhat = (self.qbar * queries[..., None]).sum(axis=-2)
+        khat = (self.kbar * keys[..., None]).sum(axis=-2)
 
         # multiplying qbar with queries, summing over key_dim (r). same for keys
         qhat = torch.einsum('bhdnr,bnhd->bnhr', self.qbar, queries)
@@ -323,6 +334,11 @@ class SineSPE(nn.Module):
         # gets (batchsize, num_heads, keys_dim, length, num_realizations)
         self.qbar = torch.matmul(omega_q[None], z)
         self.kbar = torch.matmul(omega_k[None], z)
+
+        # permuting them to be (batchsize, length, num_heads, keys_dim, num_realizations)
+        self.qbar = self.qbar.permute(0, 3, 1, 2, 4)
+        self.kbar = self.kbar.permute(0, 3, 1, 2, 4)
+
 
 
 def _split_features(x: torch.Tensor, num_positional: int) -> torch.Tensor:
