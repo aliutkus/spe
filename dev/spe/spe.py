@@ -74,6 +74,9 @@ class ConvSPE(nn.Module):
         self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
         self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)
 
+        # init the qbar and kbar as None
+        self.qbar = None
+        self.kbar = None
         return
 
         # smooth init
@@ -102,7 +105,6 @@ class ConvSPE(nn.Module):
             "As of current implementation, queries and keys must have the same shape. "\
             "got queries: {} and keys: {}".format(queries.shape, keys.shape)
 
-        batchsize = queries.shape[0]
 
         if queries.shape[-1] < self.in_features:
             raise ValueError('Expected keys/queries of dimension at least'
@@ -118,7 +120,35 @@ class ConvSPE(nn.Module):
         keys = keys.permute(0, self.ndim + 1, self.ndim + 2,
                             *[d for d in range(1, self.ndim + 1)])
 
-        # d = queries.shape[1] #d=num_heads*keys_dim
+        # Qbar and Kbar should be
+        #(batchsize, num_realizations, num_heads, keys_dim, *shape)
+        # if it's not the case, draw them anew. If it's the case, assume we keep them.
+        desired_shape = (queries.shape[0], self.num_realizations, *queries.shape[1:])
+        if self.qbar is None or self.qbar.shape != desired_shape:
+            self._draw_noise(queries)
+ 
+        # sum over d after multiplying by queries and keys
+        qhat = (self.qbar * queries[:, None]).sum(axis=3)
+        khat = (self.kbar * keys[:, None]).sum(axis=3)
+
+        # qhat are (batchsize, num_realizations, num_heads, *shape), making them (batchsize, *shape, num_heads, num_realizations)
+        qhat = qhat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
+        khat = khat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
+
+        # concatenate with the non-positional part of keys and queries
+        qhat = torch.cat([qhat, queries_rest], dim=-1)
+        khat = torch.cat([khat, keys_rest], dim=-1)
+
+        return qhat, khat
+
+    def _draw_noise(self, queries):
+        """
+        generate the random QBar and Kbar, depending on the parameters,
+        and store them in the module.
+        Args:
+            queries: (batchsize, num_heads, keys_dim, *shape)
+        """
+        batchsize = queries.shape[0]
         original_shape = queries.shape[3:]
 
         # decide on the size of the signal to generate
@@ -133,8 +163,8 @@ class ConvSPE(nn.Module):
             device=self.conv_q.weight.device) / math.sqrt(self.num_realizations * self.in_features)
 
         # apply convolution, get (batchsize*num_realizations, num_heads*keys_dim, *shape)
-        pe_k = self.conv_k(z)
-        pe_q = self.conv_q(z)
+        self.qbar = self.conv_k(z)
+        self.kbar = self.conv_q(z)
 
         # truncate to desired shape
         for dim in range(len(shape)):
@@ -143,28 +173,15 @@ class ConvSPE(nn.Module):
 
             indices = [slice(batchsize*self.num_realizations),
                        slice(self.num_heads*self.in_features)] + [slice(k, k+s, 1), ]
-            pe_k = pe_k[indices]
-            pe_q = pe_q[indices]
+            self.qbar = self.qbar[indices]
+            self.kbar = self.kbar[indices]
 
         # making (batchsize, num_realizations, num_heads, keys_dim, *shape)
-        pe_k = pe_k.view(batchsize, self.num_realizations,
+        self.kbar = self.kbar.view(batchsize, self.num_realizations,
                          self.num_heads, self.in_features, *original_shape)
-        pe_q = pe_q.view(batchsize, self.num_realizations,
+        self.qbar = self.qbar.view(batchsize, self.num_realizations,
                          self.num_heads, self.in_features, *original_shape)
 
-        # sum over d after multiplying by queries and keys
-        qhat = (pe_q * queries[:, None]).sum(axis=3)
-        khat = (pe_k * keys[:, None]).sum(axis=3)
-
-        # qhat are (batchsize, num_realizations, num_heads, *shape), making them (batchsize, *shape, num_heads, num_realizations)
-        qhat = qhat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
-        khat = khat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
-
-        # concatenate with the non-positional part of keys and queries
-        qhat = torch.cat([qhat, queries_rest], dim=-1)
-        khat = torch.cat([khat, keys_rest], dim=-1)
-
-        return qhat, khat
 
 
 class SineSPE(nn.Module):
@@ -210,6 +227,10 @@ class SineSPE(nn.Module):
                 )
             )
 
+        # int the qbar and kbar as None
+        self.qbar = None
+        self.kbar = None
+
     def forward(
         self, queries: torch.Tensor, keys: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -224,9 +245,6 @@ class SineSPE(nn.Module):
             "As of current implementation, queries and keys must have the same shape. "\
             "got queries: {} and keys: {}".format(queries.shape, keys.shape)
 
-        batchsize = queries.shape[0]
-        length = queries.shape[1]
-
         if queries.shape[-1] < self.in_features:
             raise ValueError('Expected keys/queries of dimension at least'
                              f'{self.in_features}, got {queries.shape[-1]}.')
@@ -234,6 +252,35 @@ class SineSPE(nn.Module):
         # split off the non-positional part
         queries, queries_rest = _split_features(queries, self.in_features)
         keys, keys_rest = _split_features(keys, self.in_features)
+
+        # Qbar and Kbar should be
+        # gets (batchsize, num_heads, keys_dim, length, num_realizations)
+        # if it's not the case, draw them anew. If it's the case, we keep them.
+        (batchsize, length,num_heads, keys_dim) = queries.shape
+        desired_shape = (batchsize, num_heads, keys_dim, length, self.num_realizations)
+        if self.qbar is None or self.qbar.shape != desired_shape:
+            self._draw_noise(queries)
+
+        # multiplying qbar with queries, summing over key_dim (r). same for keys
+        qhat = torch.einsum('bhdnr,bnhd->bnhr', self.qbar, queries)
+        khat = torch.einsum('bhdnr,bnhd->bnhr', self.kbar, keys)
+
+        # concatenate with the non-positional part of keys and queries
+        qhat = torch.cat([qhat, queries_rest], dim=-1)
+        khat = torch.cat([khat, keys_rest], dim=-1)
+
+        return qhat, khat
+
+    def _draw_noise(self, queries):
+        """
+        generate the random QBar and Kbar, depending on the parameters,
+        and store them in the module.
+        Args:
+            queries: (batchsize, length, num_heads, keys_dim)
+        """
+
+        batchsize = queries.shape[0]
+        length = queries.shape[1]
 
         # build omega_q and omega_k,
         # with shape (num_heads, keys_dim, length, 2*num_sines)
@@ -272,16 +319,10 @@ class SineSPE(nn.Module):
         # z is still (batchsize, num_heads, keys_dim, 2*num_sines, num_realizations)
         z = z * gains[None, ..., None]
 
-        # multiplying z with omega, summing over the sines (l),
-        # multiplying with queries, summing over key_dim (r)
-        qhat = torch.einsum('bhdlr,hdnl,bnhd->bnhr', z, omega_q, queries)
-        khat = torch.einsum('bhdlr,hdnl,bnhd->bnhr', z, omega_k, keys)
-
-        # concatenate with the non-positional part of keys and queries
-        qhat = torch.cat([qhat, queries_rest], dim=-1)
-        khat = torch.cat([khat, keys_rest], dim=-1)
-
-        return qhat, khat
+        # computing the sum over the sines. 
+        # gets (batchsize, num_heads, keys_dim, length, num_realizations)
+        self.qbar = torch.matmul(omega_q[None], z)
+        self.kbar = torch.matmul(omega_k[None], z)
 
 
 def _split_features(x: torch.Tensor, num_positional: int) -> torch.Tensor:
