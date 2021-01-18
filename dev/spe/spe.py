@@ -74,9 +74,8 @@ class ConvSPE(nn.Module):
         self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
         self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)
 
-        # init the qbar and kbar as None
-        self.qbar = None
-        self.kbar = None
+        # reset qbar and kbar
+        self.reset()
         return
 
         # smooth init
@@ -90,6 +89,15 @@ class ConvSPE(nn.Module):
             in_features * num_heads, 1, *((1,)*ndim))
         self.conv_q.weight.data = init_weight.clone()
         self.conv_k.weight.data = init_weight.clone()
+
+    def reset(self):
+        """
+        Reset noise.
+            at training, this is typically done for each new batch.
+            at testing, this is typically never done 
+        """
+        self.qbar = None
+        self.kbar = None
 
     def forward(
         self, queries: torch.Tensor, keys: torch.Tensor
@@ -229,7 +237,16 @@ class SineSPE(nn.Module):
 
         # bias initial frequencies to low values for long term range
         self.freqs.data[...] -= 5.
-        # int the qbar and kbar as None
+
+        # reset qbar and kbar
+        self.reset()
+
+    def reset(self):
+        """
+        Reset noise.
+            at training, this is typically done for each new batch.
+            at testing, this is typically never done 
+        """
         self.qbar = None
         self.kbar = None
 
