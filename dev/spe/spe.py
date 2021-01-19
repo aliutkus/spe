@@ -291,15 +291,16 @@ class SineSPE(nn.Module):
 
         if self.qbar is None:
             self._draw_noise()
-        desired_shape = (*queries.shape, self.num_realizations)
-        if self.qbar.shape[2:] != desired_shape[2:]:
-            raise RuntimeError(f'Positional encodings have shape {self.qbar.shape}, '
-                               f'but expected {desired_shape} '
-                               f'(queries have shape {queries.shape})')
         length = queries.shape[1]
         if self.qbar.shape[1] < length:
-            raise RuntimeError(f'Positional encodings have length {self.qbar.shape[1]}, '
-                               f'but expected at least {length}')
+            raise RuntimeError(f'Keys/queries have length {length}, '
+                               f'but expected at most {self.qbar.shape[1]}')
+        desired_shape = (queries.shape[0], self.qbar.shape[1], *queries.shape[2:],
+                         self.num_realizations)
+        if self.qbar.shape[2:] != desired_shape[2:]:
+            raise RuntimeError(f'Positional encodings have shape {self.qbar.shape}, '
+                               f'but need {desired_shape} for queries of shape '
+                               f'{queries.shape}')
 
         # sum over the keys_dim after multiplying by queries and keys
         qhat = (self.qbar[:, :length] * queries[..., None]).sum(axis=-2)
