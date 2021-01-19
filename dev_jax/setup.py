@@ -19,6 +19,5 @@ setup(
     packages=['jax_spe'],
     install_requires=[
         'jax>=0.2.6',
-        'jax-spectral @ git+https://github.com/cifkao/jax-spectral.git@main#egg=jax-spectral'
     ],
 )
