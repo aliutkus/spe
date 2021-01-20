@@ -74,12 +74,13 @@ class ConvSPE(nn.Module):
         self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
         self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)
 
+        if gated:
+            self.register_parameter('bias', nn.Parameter(
+                torch.randn(num_heads, in_features) + 5.
+            ))
+
         # reset qbar and kbar
         self.reset()
-
-        self.register_parameter('bias', nn.Parameter(
-            torch.randn(num_heads, in_features) + 5.
-        ))
 
     def reset(self):
         """
@@ -240,9 +241,10 @@ class SineSPE(nn.Module):
         # bias initial frequencies to low values for long term range
         self.freqs.data[...] -= 5.
 
-        self.register_parameter('bias', nn.Parameter(
-            torch.randn(num_heads, in_features) + 5.
-        ))
+        if gated:
+            self.register_parameter('bias', nn.Parameter(
+                torch.randn(num_heads, in_features) + 5.
+            ))
 
         # reset qbar and kbar
         self.reset(max_len)
