@@ -24,7 +24,8 @@ class ConvSPE(nn.Module):
         num_heads: int = 8,
         in_features: int = 64,
         num_realizations: int = 256,
-        kernel_size: Union[int, Tuple[int, ...]] = 200
+        kernel_size: Union[int, Tuple[int, ...]] = 200,
+        gated: bool = True,
     ):
         super(ConvSPE, self).__init__()
 
@@ -47,6 +48,7 @@ class ConvSPE(nn.Module):
         self.num_heads = num_heads
         self.kernel_size = kernel_size
         self.num_realizations = num_realizations
+        self.gated = gated
 
         # create the two convolution layers
         self.conv_q = conv_class(
@@ -171,19 +173,19 @@ class ConvSPE(nn.Module):
         self.qbar = self.qbar.view(batchsize, self.num_realizations,
                          self.num_heads, self.in_features, *original_shape)
 
-
-        # and finally take incorporate the constant bias for Pd. First draw noise
-        # such that noise noise^T = 1, for each head, feature, realization.
-        bias_noise = torch.randn(
-            1, 1, self.num_heads, self.in_features, self.num_realizations,
-            device=z.device)
-        # normalize it so that it's an additive 1 to Pd
-        bias_noise = bias_noise / bias_noise.norm(dim=4, keepdim=True)
-        # weight it by the bias parameter after constraining to [0 1]
-        bias = torch.sigmoid(self.bias[None, None, ..., None])
-        # add to queries and keys.
-        self.qbar = bias * (self.qbar)  + (1.-bias) * bias_noise
-        self.kbar = bias * (self.kbar)  + (1.-bias) * bias_noise
+        if self.gated:
+            # and finally take incorporate the constant bias for Pd. First draw noise
+            # such that noise noise^T = 1, for each head, feature, realization.
+            bias_noise = torch.randn(
+                1, 1, self.num_heads, self.in_features, self.num_realizations,
+                device=z.device)
+            # normalize it so that it's an additive 1 to Pd
+            bias_noise = bias_noise / bias_noise.norm(dim=4, keepdim=True)
+            # weight it by the bias parameter after constraining to [0 1]
+            bias = torch.sigmoid(self.bias[None, None, ..., None])
+            # add to queries and keys.
+            self.qbar = bias * (self.qbar)  + (1.-bias) * bias_noise
+            self.kbar = bias * (self.kbar)  + (1.-bias) * bias_noise
 
 
 class SineSPE(nn.Module):
@@ -207,6 +209,7 @@ class SineSPE(nn.Module):
         num_realizations: int = 256,
         num_sines: int = 10,
         max_len: Optional[int] = None,
+        gated: bool = True,
     ):
         super(SineSPE, self).__init__()
 
@@ -215,6 +218,7 @@ class SineSPE(nn.Module):
         self.in_features = in_features
         self.num_sines = num_sines
         self.num_realizations = num_realizations
+        self.gated = gated
 
         # register the parameter
         for param in ['freqs', 'offsets', 'gains']:
@@ -344,15 +348,16 @@ class SineSPE(nn.Module):
         self.qbar = self.qbar.permute(0, 3, 1, 2, 4)
         self.kbar = self.kbar.permute(0, 3, 1, 2, 4)
 
-        # and finally take incorporate the constant bias for Pd. First draw noise
-        # such that noise noise^T = 1, for each head, feature, realization.
-        bias_noise = torch.randn(
-            1, 1, self.num_heads, self.in_features, self.num_realizations,
-            device=z.device)
-        # normalize it so that it's an additive 1 to Pd
-        bias_noise = bias_noise / bias_noise.norm(dim=4, keepdim=True)
-        # weight it by the bias parameter after constraining to [0 1]
-        bias = torch.sigmoid(self.bias[None, None, ..., None])
-        # add to queries and keys.
-        self.qbar = bias * (self.qbar)  + (1.-bias) * bias_noise
-        self.kbar = bias * (self.kbar)  + (1.-bias) * bias_noise
+        if self.gated:
+            # and finally take incorporate the constant bias for Pd. First draw noise
+            # such that noise noise^T = 1, for each head, feature, realization.
+            bias_noise = torch.randn(
+                1, 1, self.num_heads, self.in_features, self.num_realizations,
+                device=z.device)
+            # normalize it so that it's an additive 1 to Pd
+            bias_noise = bias_noise / bias_noise.norm(dim=4, keepdim=True)
+            # weight it by the bias parameter after constraining to [0 1]
+            bias = torch.sigmoid(self.bias[None, None, ..., None])
+            # add to queries and keys.
+            self.qbar = bias * (self.qbar)  + (1.-bias) * bias_noise
+            self.kbar = bias * (self.kbar)  + (1.-bias) * bias_noise
