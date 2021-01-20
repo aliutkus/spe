@@ -13,10 +13,6 @@ class ConvSPE(nn.Module):
             2 = image).
         num_heads: The number of attention heads.
         in_features: The number of input features per attention head.
-            If the actual key/query dimension is greater, only the
-            first `in_features` will be used and the rest will be
-            copied to the output unchanged. This is useful for keeping
-            some features non-positional.
         num_realizations: The number of realizations of the stochastic
             process (R).
         kernel_size: The size of the convolution kernel.
@@ -76,19 +72,10 @@ class ConvSPE(nn.Module):
 
         # reset qbar and kbar
         self.reset()
-        return
 
-        # smooth init
-        init_weight = 1.
-        for d in range(ndim):
-            win = torch.hann_window(kernel_size[d])
-            index = (None, None, *((None,)*d), Ellipsis, *(None,)*(ndim-1-d))
-            init_weight = init_weight * win[index]
-        init_weight = init_weight / torch.sqrt(init_weight.norm())
-        init_weight = init_weight.repeat(
-            in_features * num_heads, 1, *((1,)*ndim))
-        self.conv_q.weight.data = init_weight.clone()
-        self.conv_k.weight.data = init_weight.clone()
+        self.register_parameter('bias', nn.Parameter(
+            torch.randn(num_heads, in_features) + 5.
+        ))
 
     def reset(self):
         """
@@ -115,12 +102,9 @@ class ConvSPE(nn.Module):
 
 
         if queries.shape[-1] < self.in_features:
-            raise ValueError('Expected keys/queries of dimension at least'
+            raise ValueError('Expected keys/queries of dimension equal to'
                              f'{self.in_features}, got {queries.shape[-1]}.')
 
-        # split off the non-positional part
-        queries, queries_rest = _split_features(queries, self.in_features)
-        keys, keys_rest = _split_features(keys, self.in_features)
 
         # making queries and keys (batchsize, num_heads, keys_dim, *shape)
         queries = queries.permute(
@@ -143,9 +127,6 @@ class ConvSPE(nn.Module):
         qhat = qhat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
         khat = khat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
 
-        # concatenate with the non-positional part of keys and queries
-        qhat = torch.cat([qhat, queries_rest], dim=-1)
-        khat = torch.cat([khat, keys_rest], dim=-1)
 
         return qhat, khat
 
@@ -191,6 +172,19 @@ class ConvSPE(nn.Module):
                          self.num_heads, self.in_features, *original_shape)
 
 
+        # and finally take incorporate the constant bias for Pd. First draw noise
+        # such that noise noise^T = 1, for each head, feature, realization.
+        bias_noise = torch.randn(
+            1, 1, self.num_heads, self.in_features, self.num_realizations,
+            device=z.device)
+        # normalize it so that it's an additive 1 to Pd
+        bias_noise = bias_noise / bias_noise.norm(dim=4, keepdim=True)
+        # weight it by the bias parameter after constraining to [0 1]
+        bias = torch.sigmoid(self.bias[None, None, ..., None])
+        # add to queries and keys.
+        self.qbar = bias * (self.qbar)  + (1.-bias) * bias_noise
+        self.kbar = bias * (self.kbar)  + (1.-bias) * bias_noise
+
 
 class SineSPE(nn.Module):
     """Sinusoidal stochastic positional encoding.
@@ -198,10 +192,6 @@ class SineSPE(nn.Module):
     Args:
         num_heads: The number of attention heads.
         in_features: The number of input features per attention head.
-            If the actual key/query dimension is greater, only the
-            first `in_features` will be used and the rest will be
-            copied to the output unchanged. This is useful for keeping
-            some features non-positional.
         num_realizations: The number of realizations of the stochastic
             process (R).
         num_sines: The number of sin and cos components (K).
@@ -242,6 +232,10 @@ class SineSPE(nn.Module):
         # bias initial frequencies to low values for long term range
         self.freqs.data[...] -= 5.
 
+        self.register_parameter('bias', nn.Parameter(
+            torch.randn(num_heads, in_features) + 5.
+        ))
+
         # reset qbar and kbar
         self.reset(max_len)
 
@@ -275,12 +269,8 @@ class SineSPE(nn.Module):
             "got queries: {} and keys: {}".format(queries.shape, keys.shape)
 
         if queries.shape[-1] < self.in_features:
-            raise ValueError('Expected keys/queries of dimension at least '
+            raise ValueError('Expected keys/queries of dimension equal to '
                              f'{self.in_features}, got {queries.shape[-1]}.')
-
-        # split off the non-positional part
-        queries, queries_rest = _split_features(queries, self.in_features)
-        keys, keys_rest = _split_features(keys, self.in_features)
 
         length = keys.shape[1]
         if self.qbar is None:
@@ -300,10 +290,6 @@ class SineSPE(nn.Module):
         # qbar/kbar is (1, max_len, ...), truncating and broadcasting over the batch
         qhat = (self.qbar[:, :length] * queries[..., None]).sum(axis=-2)
         khat = (self.kbar[:, :length] * keys[..., None]).sum(axis=-2)
-
-        # concatenate with the non-positional part of keys and queries
-        qhat = torch.cat([qhat, queries_rest], dim=-1)
-        khat = torch.cat([khat, keys_rest], dim=-1)
 
         return qhat, khat
 
@@ -358,7 +344,15 @@ class SineSPE(nn.Module):
         self.qbar = self.qbar.permute(0, 3, 1, 2, 4)
         self.kbar = self.kbar.permute(0, 3, 1, 2, 4)
 
-
-
-def _split_features(x: torch.Tensor, num_positional: int) -> torch.Tensor:
-    return x.split([num_positional, x.shape[-1] - num_positional], dim=-1)
+        # and finally take incorporate the constant bias for Pd. First draw noise
+        # such that noise noise^T = 1, for each head, feature, realization.
+        bias_noise = torch.randn(
+            1, 1, self.num_heads, self.in_features, self.num_realizations,
+            device=z.device)
+        # normalize it so that it's an additive 1 to Pd
+        bias_noise = bias_noise / bias_noise.norm(dim=4, keepdim=True)
+        # weight it by the bias parameter after constraining to [0 1]
+        bias = torch.sigmoid(self.bias[None, None, ..., None])
+        # add to queries and keys.
+        self.qbar = bias * (self.qbar)  + (1.-bias) * bias_noise
+        self.kbar = bias * (self.kbar)  + (1.-bias) * bias_noise
