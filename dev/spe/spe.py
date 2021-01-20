@@ -16,6 +16,8 @@ class ConvSPE(nn.Module):
         num_realizations: The number of realizations of the stochastic
             process (R).
         kernel_size: The size of the convolution kernel.
+        gated: Whether to use the gated version, which learns to balance
+            positional and positionless features.
     """
 
     def __init__(
@@ -200,6 +202,8 @@ class SineSPE(nn.Module):
         max_len: The maximum expected length of keys and queries. Can be
             set either here or by calling `reset()`, otherwise it is
             inferred from the actual keys and queries.
+        gated: Whether to use the gated version, which learns to balance
+            positional and positionless features.
     """
 
     def __init__(
