@@ -51,18 +51,20 @@ class SineSPE(nn.Module):
 
         self.code_shape = (num_heads, in_features, num_realizations)
 
-    def forward(self, queries):
+    def forward(self, shape):
         """
         Generate the code, composed of a random QBar and Kbar,
         depending on the parameters, and return them for use with a
         SPE module to actually encode queries and keys.
 
         Args:
-            queries: a torch.Tensor that is only used to infer the shape of the codes to generate
+            shape: The outer shape of the inputs: (batchsize, *size)
         """
+        if len(shape) != 2:
+            raise ValueError('Only 1D inputs are supported by SineSPE')
 
         # get shape of the queries. Here it's only 1d
-        max_len = queries.shape[1]
+        max_len = shape[1]
 
         # build omega_q and omega_k,
         # with shape (num_heads, keys_dim, length, 2*num_sines)
@@ -186,14 +188,14 @@ class ConvSPE(nn.Module):
 
         self.code_shape = (num_heads, in_features, num_realizations)
 
-    def forward(self, queries):
+    def forward(self, shape):
         """
         generate the random QBar and Kbar, depending on the parameters,
         Args:
-            queries: (batchsize, *shape, num_heads, keys_dim)
+            shape: The outer shape of the inputs: (batchsize, *size)
         """
         batchsize = 1
-        original_shape = queries.shape[1:-2]
+        original_shape = shape[1:]
 
         # decide on the size of the signal to generate
         # (larger than desired to avoid border effects)
