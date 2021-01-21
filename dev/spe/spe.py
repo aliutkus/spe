@@ -307,13 +307,14 @@ class SPEFilter(nn.Module):
             raise ValueError(f'shape mismatch. codes have shape {qbar.shape}, '
                              f'but queries are {queries.shape}')
 
-        # truncate qbar and kbar for matching current queries and keys
+        # truncate qbar and kbar for matching current queries and keys,
+        # but only if we need to
         for dim in range(len(query_size)):
-            # TODO: Only do this if the size is actually different (performance reasons?)
-            indices = [slice(1), *[slice(qbar.shape[1+k]) for k in range(dim)],
-                       slice(query_size[dim])]
-            qbar = qbar[indices]
-            kbar = kbar[indices]
+            if code_size[dim] > query_size[dim]:
+                indices = [slice(1), *[slice(qbar.shape[1+k]) for k in range(dim)],
+                           slice(query_size[dim])]
+                qbar = qbar[indices]
+                kbar = kbar[indices]
 
         # apply gate if required
         if self.gated:
