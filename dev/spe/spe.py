@@ -60,10 +60,10 @@ class SineSPE(nn.Module):
         Args:
         queries: a torch.Tensor that is only used to infer the shape of the codes to generate
         """
-    
+
         # get shape of the queries. Here it's only 1d
         max_len = queries.shape[1]
-    
+
         # build omega_q and omega_k,
         # with shape (num_heads, keys_dim, length, 2*num_sines)
         indices = torch.linspace(0, max_len-1, max_len, device=self.freqs.device)
@@ -233,9 +233,9 @@ class ConvSPE(nn.Module):
         return (qbar, kbar)
 
 
-class Filter(nn.Module):
+class SPEFilter(nn.Module):
     """Stochastic positional encoding filter
-    
+
     Applies a positional code provided by a SPE module on actual queries and keys.
     Implements gating, i.e. some "dry" parameter, that lets original queries and keys through if activated.
 
@@ -249,7 +249,7 @@ class Filter(nn.Module):
         gated: bool=True,
         spe = None,
     ):
-        super(Filter, self).__init__()
+        super(SPEFilter, self).__init__()
 
         self.gated = gated
 
@@ -273,7 +273,7 @@ class Filter(nn.Module):
 
         Expects keys and queries of shape `(batch_size, ..., num_heads,
         key_dim)` and outputs keys and queries of shape `(batch_size,
-        ..., num_heads, num_realizations)`. code is the tuple 
+        ..., num_heads, num_realizations)`. code is the tuple
         of the 2 tensors provided by the code instance, each one of
         shape (1, ..., num_heads, key_dim, num_realizations)
         """
@@ -297,7 +297,7 @@ class Filter(nn.Module):
         if qbar.shape[-3:-1] != queries.shape[-2:]:
             raise RuntimeError(f'shape mismatch. codes have shape {qbar.shape}, '
                                f'but queries are {queries.shape}')
-        
+
 
         # truncate qbar and kbar for matching current queries and keys
         for dim in range(len(query_shape)):
