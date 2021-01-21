@@ -15,8 +15,6 @@ class SineSPE(nn.Module):
         num_realizations: The number of realizations of the stochastic
             process (R).
         num_sines: The number of sin and cos components (K).
-        gated: Whether to use the gated version, which learns to balance
-            positional and positionless features.
     """
 
     def __init__(
@@ -51,6 +49,8 @@ class SineSPE(nn.Module):
         # bias initial frequencies to low values for long term range
         self.freqs.data[...] -= 4.
 
+        self.code_shape = (num_heads, in_features, num_realizations)
+
     def forward(self, queries):
         """
         Generate the code, composed of a random QBar and Kbar,
@@ -58,7 +58,7 @@ class SineSPE(nn.Module):
         SPE module to actually encode queries and keys.
 
         Args:
-        queries: a torch.Tensor that is only used to infer the shape of the codes to generate
+            queries: a torch.Tensor that is only used to infer the shape of the codes to generate
         """
 
         # get shape of the queries. Here it's only 1d
@@ -184,6 +184,7 @@ class ConvSPE(nn.Module):
         self.conv_q.weight.data = self.conv_q.weight.data / torch.sqrt(self.conv_q.weight.data.norm(keepdim=True))
         self.conv_k.weight.data = self.conv_k.weight.data / torch.sqrt(self.conv_k.weight.data.norm(keepdim=True))
 
+        self.code_shape = (num_heads, in_features, num_realizations)
 
     def forward(self, queries):
         """
@@ -242,24 +243,25 @@ class SPEFilter(nn.Module):
     Args:
     gated: whether to use the gated version, which learns to balance
         positional and positionless features.
-    spe: if gated, then a spe instance must be provided
+    code_shape: the inner shape of the codes, i.e. (num_heads, key_dim, num_realizations),
+        as given by `spe.code_shape`
     """
     def __init__(
         self,
-        gated: bool=True,
-        spe = None,
+        gated: bool = True,
+        code_shape: Optional[Tuple[int, int, int]] = None,
     ):
         super(SPEFilter, self).__init__()
 
         self.gated = gated
+        self.code_shape = code_shape
 
         # create the gating parameters if required
         if gated:
-            if spe is None:
-                raise RuntimeError('the spe instance has to be provided if gated is True.')
-            self.spe = spe
+            if code_shape is None:
+                raise RuntimeError('code_shape has to be provided if gated is True.')
             self.register_parameter('gate', nn.Parameter(
-                torch.randn(spe.num_heads, spe.in_features) - 2.
+                torch.randn(code_shape[:-1])
             ))
 
     def forward(
@@ -281,39 +283,43 @@ class SPEFilter(nn.Module):
             "As of current implementation, queries and keys must have the same shape. "\
             "got queries: {} and keys: {}".format(queries.shape, keys.shape)
 
-
         # qbar and kbar are (1, *shape, num_heads, keys_dim, num_realizations)
         (qbar, kbar) = code
 
-        # check shapes: size of codes should be bigger than queries, keys
-        code_shape = qbar.shape[1:-3]
-        query_shape = queries.shape[1:-2]
-        if (len(code_shape) != len(query_shape)
-            or torch.any(
-                torch.tensor(code_shape) < torch.tensor(query_shape)
-            )):
-                raise RuntimeError(f'Keys/queries have length {query_shape}, '
-                                f'but expected at most {code_shape}')
-        if qbar.shape[-3:-1] != queries.shape[-2:]:
-            raise RuntimeError(f'shape mismatch. codes have shape {qbar.shape}, '
-                               f'but queries are {queries.shape}')
+        # check that codes have the shape we are expecting
+        if self.code_shape is not None and qbar.shape[-3:] != self.code_shape:
+            raise ValueError(
+                f'The inner shape of codes is {qbar.shape[-3:]}, '
+                f'but expected {self.code_shape}')
 
+        # check shapes: size of codes should be bigger than queries, keys
+        code_size = qbar.shape[1:-3]
+        query_size = queries.shape[1:-2]
+        if (len(code_size) != len(query_size)
+            or torch.any(
+                torch.tensor(code_size) < torch.tensor(query_size)
+            )):
+                raise ValueError(f'Keys/queries have length {query_size}, '
+                                 f'but expected at most {code_size}')
+        if qbar.shape[-3:-1] != queries.shape[-2:]:
+            raise ValueError(f'shape mismatch. codes have shape {qbar.shape}, '
+                             f'but queries are {queries.shape}')
 
         # truncate qbar and kbar for matching current queries and keys
-        for dim in range(len(query_shape)):
+        for dim in range(len(query_size)):
+            # TODO: Only do this if the size is actually different (performance reasons?)
             indices = [slice(1), *[slice(qbar.shape[1+k]) for k in range(dim)],
-                       slice(query_shape[dim])]
+                       slice(query_size[dim])]
             qbar = qbar[indices]
             kbar = kbar[indices]
 
         # apply gate if required
         if self.gated:
-            print('gating !')
             # incorporate the constant bias for Pd if required. First draw noise
             # such that noise noise^T = 1, for each head, feature, realization.
             gating_noise = torch.randn(
-                self.spe.num_heads, self.spe.in_features, self.spe.num_realizations,
-                device=queries.device) / math.sqrt(self.spe.in_features)
+                self.code_shape,
+                device=queries.device) / math.sqrt(qbar.shape[-2])
             # normalize it so that it's an additive 1 to Pd
             #gating_noise = gating_noise / gating_noise.norm(dim=2, keepdim=True)
 
