@@ -1,1 +1,1 @@
-from .spe import ConvSPE, SineSPE
+from .spe import ConvSPE, SineSPE, SPEFilter
