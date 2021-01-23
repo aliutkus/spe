@@ -1,6 +1,5 @@
 import math
 from typing import Optional, Tuple, Union
-
 import torch
 from torch import nn
 
@@ -22,7 +21,7 @@ class SineSPE(nn.Module):
         num_heads: int = 8,
         in_features: int = 64,
         num_realizations: int = 256,
-        num_sines: int = 10,
+        num_sines: int = 1
     ):
         super(SineSPE, self).__init__()
 
@@ -45,13 +44,15 @@ class SineSPE(nn.Module):
                 )
             )
 
-        self.gains.data[...] = 1.
+        #self.gains.data[...] = 1.
+        #self.gains.data[...] /= torch.sqrt(self.gains.norm(dim=-1, keepdim=True))
+
         # bias initial frequencies to low values for long term range
         self.freqs.data[...] -= 4.
 
-        self.code_shape = (num_heads, in_features, num_realizations)
+        self.code_shape = (num_heads, in_features)
 
-    def forward(self, shape):
+    def forward(self, shape, num_realizations=None):
         """
         Generate the code, composed of a random QBar and Kbar,
         depending on the parameters, and return them for use with a
@@ -59,6 +60,7 @@ class SineSPE(nn.Module):
 
         Args:
             shape: The outer shape of the inputs: (batchsize, *size)
+            num_realizations: if provided, overrides self.num_realizations
         """
         if len(shape) != 2:
             raise ValueError('Only 1D inputs are supported by SineSPE')
@@ -95,12 +97,15 @@ class SineSPE(nn.Module):
         #gains = gains / torch.sqrt(gains.norm(dim=-1, keepdim=True))
         gains = gains.repeat(1, 1, 2)
 
+        # the number of realizations is overrided by the function argument if provided
+        if num_realizations is None:
+            num_realizations = self.num_realizations
 
         # draw noise of appropriate shape on the right device
         z = torch.randn(
             1, self.num_heads, self.in_features, 2 * self.num_sines,
-            self.num_realizations,
-            device=self.freqs.device) / math.sqrt(self.in_features * self.num_sines * 2)
+            num_realizations,
+            device=self.freqs.device) / math.sqrt(self.num_sines * 2)
 
         # scale each of the 2*num_sines by the appropriate gain
         # z is still (1, num_heads, keys_dim, 2*num_sines, num_realizations)
@@ -115,7 +120,9 @@ class SineSPE(nn.Module):
         qbar = qbar.permute(0, 3, 1, 2, 4)
         kbar = kbar.permute(0, 3, 1, 2, 4)
 
-        return (qbar, kbar)
+        # final scaling
+        scale = (num_realizations * self.in_features)**0.25
+        return (qbar/scale, kbar/scale)
 
 
 class ConvSPE(nn.Module):
@@ -183,12 +190,14 @@ class ConvSPE(nn.Module):
         # random init
         self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
         self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)
-        self.conv_q.weight.data = self.conv_q.weight.data / torch.sqrt(self.conv_q.weight.data.norm(keepdim=True))
-        self.conv_k.weight.data = self.conv_k.weight.data / torch.sqrt(self.conv_k.weight.data.norm(keepdim=True))
 
-        self.code_shape = (num_heads, in_features, num_realizations)
+        scale = math.sqrt(torch.prod(torch.tensor(kernel_size))/2)
+        self.conv_q.weight.data = self.conv_q.weight.data / scale
+        self.conv_k.weight.data = self.conv_k.weight.data / scale
+        
+        self.code_shape = (num_heads, in_features)
 
-    def forward(self, shape):
+    def forward(self, shape, num_realizations=None):
         """
         generate the random QBar and Kbar, depending on the parameters,
         Args:
@@ -201,12 +210,16 @@ class ConvSPE(nn.Module):
         # (larger than desired to avoid border effects)
         shape = [4*k+s for (k, s) in zip(self.kernel_size, original_shape)]
 
+        # the number of realizations is overrided by the function argument if provided
+        if num_realizations is None:
+            num_realizations = self.num_realizations
+
         # draw noise of appropriate shape on the right device
         z = torch.randn(
-            batchsize*self.num_realizations,
+            batchsize*num_realizations,
             self.num_heads * self.in_features,
             *shape,
-            device=self.conv_q.weight.device) / math.sqrt(self.in_features)
+            device=self.conv_q.weight.device)
 
         # apply convolution, get (batchsize*num_realizations, num_heads*keys_dim, *shape)
         kbar = self.conv_q(z)
@@ -217,23 +230,25 @@ class ConvSPE(nn.Module):
             k = self.kernel_size[dim]
             s = original_shape[dim]
 
-            indices = [slice(batchsize*self.num_realizations),
+            indices = [slice(batchsize*num_realizations),
                        slice(self.num_heads*self.in_features)] + [slice(k, k+s, 1), ]
             qbar = qbar[indices]
             kbar = kbar[indices]
 
         # making (batchsize, num_realizations, num_heads, keys_dim, *shape)
-        kbar = kbar.view(batchsize, self.num_realizations,
+        kbar = kbar.view(batchsize, num_realizations,
                          self.num_heads, self.in_features, *original_shape)
-        qbar = qbar.view(batchsize, self.num_realizations,
+        qbar = qbar.view(batchsize, num_realizations,
                          self.num_heads, self.in_features, *original_shape)
 
-
-        # permuting to be (batchsize, *shape, num_heads, keys_dim, num_realizations) as desired
+        # permuting to be 
+        # (batchsize, *shape, num_heads, keys_dim, num_realizations) as desired
         qbar = qbar.permute(0, *[x for x in range(4, self.ndim+4)], 2, 3, 1)
         kbar = kbar.permute(0, *[x for x in range(4, self.ndim+4)], 2, 3, 1)
 
-        return (qbar, kbar)
+        # final scaling
+        scale = (num_realizations * self.in_features)**0.25
+        return (qbar/scale, kbar/scale)
 
 
 class SPEFilter(nn.Module):
@@ -289,9 +304,9 @@ class SPEFilter(nn.Module):
         (qbar, kbar) = code
 
         # check that codes have the shape we are expecting
-        if self.code_shape is not None and qbar.shape[-3:] != self.code_shape:
+        if self.code_shape is not None and qbar.shape[-3:-1] != self.code_shape:
             raise ValueError(
-                f'The inner shape of codes is {qbar.shape[-3:]}, '
+                f'The inner shape of codes is {qbar.shape[-3:-1]}, '
                 f'but expected {self.code_shape}')
 
         # check shapes: size of codes should be bigger than queries, keys
@@ -320,9 +335,12 @@ class SPEFilter(nn.Module):
         if self.gated:
             # incorporate the constant bias for Pd if required. First draw noise
             # such that noise noise^T = 1, for each head, feature, realization.
+            # qbar is : (1, *shape, num_heads, keys_dim, num_realizations)
+            in_features = qbar.shape[-2]
+            num_realizations = qbar.shape[-1]
             gating_noise = torch.randn(
-                self.code_shape,
-                device=queries.device) / math.sqrt(qbar.shape[-2])
+                self.code_shape+(num_realizations,),
+                device=queries.device) / (in_features * num_realizations)**0.25
             # normalize it so that it's an additive 1 to Pd
             #gating_noise = gating_noise / gating_noise.norm(dim=2, keepdim=True)
 
@@ -333,11 +351,8 @@ class SPEFilter(nn.Module):
             # gating noise is (num_heads, keys_dim, num_realizations)
             # gate is (num_heads, keys_dim, 1)
             #import ipdb; ipdb.set_trace()
-            qbar = (1.-gate) * qbar  + gate * gating_noise
-            kbar = (1.-gate) * kbar  + gate * gating_noise
-
-        #qbar = qbar / qbar.norm(dim = -1, keepdim=True)
-        #kbar = kbar / kbar.norm(dim = -1, keepdim=True)
+            qbar = torch.sqrt(1.-gate) * qbar  + torch.sqrt(gate) * gating_noise
+            kbar = torch.sqrt(1.-gate) * kbar  + torch.sqrt(gate) * gating_noise
 
         # sum over d after multiplying by queries and keys
         # qbar/kbar are (1, *shape, num_heads, keys_dim, num_realizations)
