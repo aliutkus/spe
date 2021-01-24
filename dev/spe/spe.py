@@ -1,22 +1,139 @@
 import math
 from typing import Optional, Tuple, Union
-
 import torch
 from torch import nn
 
 
+class SineSPE(nn.Module):
+    """
+    code generator for sinusoidal stochastic positional encoding.
+
+    Args:
+        num_heads: The number of attention heads.
+        in_features: The number of input features per attention head.
+        num_realizations: The number of realizations of the stochastic
+            process (R).
+        num_sines: The number of sin and cos components (K).
+    """
+
+    def __init__(
+        self,
+        num_heads: int = 8,
+        in_features: int = 64,
+        num_realizations: int = 256,
+        num_sines: int = 1
+    ):
+        super(SineSPE, self).__init__()
+
+        # saving dimensions
+        self.num_heads = num_heads
+        self.in_features = in_features
+        self.num_sines = num_sines
+        self.num_realizations = num_realizations
+
+        # register the parameter
+        for param in ['freqs', 'offsets', 'gains']:
+            self.register_parameter(
+                param,
+                nn.Parameter(
+                    torch.randn(
+                        num_heads,
+                        in_features,
+                        num_sines
+                    )
+                )
+            )
+
+        #self.gains.data[...] = 1.
+        #self.gains.data[...] /= torch.sqrt(self.gains.norm(dim=-1, keepdim=True))
+
+        # bias initial frequencies to low values for long term range
+        self.freqs.data[...] -= 4.
+
+        self.code_shape = (num_heads, in_features)
+
+    def forward(self, shape, num_realizations=None):
+        """
+        Generate the code, composed of a random QBar and Kbar,
+        depending on the parameters, and return them for use with a
+        SPE module to actually encode queries and keys.
+
+        Args:
+            shape: The outer shape of the inputs: (batchsize, *size)
+            num_realizations: if provided, overrides self.num_realizations
+        """
+        if len(shape) != 2:
+            raise ValueError('Only 1D inputs are supported by SineSPE')
+
+        # get shape of the queries. Here it's only 1d
+        max_len = shape[1]
+
+        # build omega_q and omega_k,
+        # with shape (num_heads, keys_dim, length, 2*num_sines)
+        indices = torch.linspace(0, max_len-1, max_len, device=self.freqs.device)
+
+        # making sure the frequencies are in [0, 0.5]
+        freqs = torch.sigmoid(self.freqs[:, :, None, :])/2.
+
+        phases_q = (
+            2 * math.pi
+            * freqs * indices[None, None, :, None]
+            + self.offsets[:, :, None, :]
+        )
+        omega_q = torch.stack([torch.cos(phases_q), torch.sin(phases_q)], dim=-1).view(
+            1, self.num_heads, self.in_features, max_len, 2*self.num_sines
+        )
+
+        phases_k = (
+            2 * math.pi
+            * freqs * indices[None, None, :, None]
+        )
+        omega_k = torch.stack([torch.cos(phases_k), torch.sin(phases_k)], dim=-1).view(
+            1, self.num_heads, self.in_features, max_len, 2*self.num_sines
+        )
+
+        # gains is (num_heads, keys_dim, 2*num_sines). Making then nonnegative with softplus
+        gains = nn.functional.softplus(self.gains)
+        #gains = gains / torch.sqrt(gains.norm(dim=-1, keepdim=True))
+        gains = gains.repeat(1, 1, 2)
+
+        # the number of realizations is overrided by the function argument if provided
+        if num_realizations is None:
+            num_realizations = self.num_realizations
+
+        # draw noise of appropriate shape on the right device
+        z = torch.randn(
+            1, self.num_heads, self.in_features, 2 * self.num_sines,
+            num_realizations,
+            device=self.freqs.device) / math.sqrt(self.num_sines * 2)
+
+        # scale each of the 2*num_sines by the appropriate gain
+        # z is still (1, num_heads, keys_dim, 2*num_sines, num_realizations)
+        z = z * gains[None, ..., None]
+
+        # computing the sum over the sines.
+        # gets (1, num_heads, keys_dim, length, num_realizations)
+        qbar = torch.matmul(omega_q, z)
+        kbar = torch.matmul(omega_k, z)
+
+        # permuting them to be (1, length, num_heads, keys_dim, num_realizations)
+        qbar = qbar.permute(0, 3, 1, 2, 4)
+        kbar = kbar.permute(0, 3, 1, 2, 4)
+
+        # final scaling
+        scale = (num_realizations * self.in_features)**0.25
+        return (qbar/scale, kbar/scale)
+
+
 class ConvSPE(nn.Module):
-    """Convolutional stochastic positional encoding.
+    """
+    code generator for convolutive stochastic positional encoding.
 
     Args:
         ndim: The number of attention dimensions (e.g. 1 = sequence,
             2 = image).
         num_heads: The number of attention heads.
         in_features: The number of input features per attention head.
-            If the actual key/query dimension is greater, only the
-            first `in_features` will be used and the rest will be
-            copied to the output unchanged. This is useful for keeping
-            some features non-positional.
         num_realizations: The number of realizations of the stochastic
             process (R).
         kernel_size: The size of the convolution kernel.
@@ -28,7 +145,7 @@ class ConvSPE(nn.Module):
         num_heads: int = 8,
         in_features: int = 64,
         num_realizations: int = 256,
-        kernel_size: Union[int, Tuple[int, ...]] = 200
+        kernel_size: Union[int, Tuple[int, ...]] = 200,
     ):
         super(ConvSPE, self).__init__()
 
@@ -74,291 +191,174 @@ class ConvSPE(nn.Module):
         self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
         self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)
 
-        # reset qbar and kbar
-        self.reset()
-        return
+        scale = math.sqrt(torch.prod(torch.tensor(kernel_size))/2)
+        self.conv_q.weight.data = self.conv_q.weight.data / scale
+        self.conv_k.weight.data = self.conv_k.weight.data / scale
+        
+        self.code_shape = (num_heads, in_features)
 
-        # smooth init
-        init_weight = 1.
-        for d in range(ndim):
-            win = torch.hann_window(kernel_size[d])
-            index = (None, None, *((None,)*d), Ellipsis, *(None,)*(ndim-1-d))
-            init_weight = init_weight * win[index]
-        init_weight = init_weight / torch.sqrt(init_weight.norm())
-        init_weight = init_weight.repeat(
-            in_features * num_heads, 1, *((1,)*ndim))
-        self.conv_q.weight.data = init_weight.clone()
-        self.conv_k.weight.data = init_weight.clone()
-
-    def reset(self):
-        """
-        Reset noise.
-            at training, this is typically done for each new batch.
-            at testing, this is typically never done
-        """
-        self.qbar = None
-        self.kbar = None
-
-    def forward(
-        self, queries: torch.Tensor, keys: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Perform SPE.
-
-        Expects keys and queries of shape `(batch_size, ..., num_heads,
-        key_dim)` and outputs keys and queries of shape `(batch_size,
-        ..., num_heads, num_realizations + key_dim - in_features)`.
-        """
-        assert (queries.shape == keys.shape), \
-            "As of current implementation, queries and keys must have the same shape. "\
-            "got queries: {} and keys: {}".format(queries.shape, keys.shape)
-
-
-        if queries.shape[-1] < self.in_features:
-            raise ValueError('Expected keys/queries of dimension at least'
-                             f'{self.in_features}, got {queries.shape[-1]}.')
-
-        # split off the non-positional part
-        queries, queries_rest = _split_features(queries, self.in_features)
-        keys, keys_rest = _split_features(keys, self.in_features)
-
-        # making queries and keys (batchsize, num_heads, keys_dim, *shape)
-        queries = queries.permute(
-            0, self.ndim + 1, self.ndim + 2, *[d for d in range(1, self.ndim + 1)])
-        keys = keys.permute(0, self.ndim + 1, self.ndim + 2,
-                            *[d for d in range(1, self.ndim + 1)])
-
-        # Qbar and Kbar should be
-        #(batchsize, num_realizations, num_heads, keys_dim, *shape)
-        # if it's not the case, draw them anew. If it's the case, assume we keep them.
-        desired_shape = (queries.shape[0], self.num_realizations, *queries.shape[1:])
-        if self.qbar is None or self.qbar.shape != desired_shape:
-            self._draw_noise(queries)
-
-        # sum over d after multiplying by queries and keys
-        qhat = (self.qbar * queries[:, None]).sum(axis=3)
-        khat = (self.kbar * keys[:, None]).sum(axis=3)
-
-        # qhat are (batchsize, num_realizations, num_heads, *shape), making them (batchsize, *shape, num_heads, num_realizations)
-        qhat = qhat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
-        khat = khat.permute(0, *[x for x in range(3, self.ndim+3)], 2, 1)
-
-        # concatenate with the non-positional part of keys and queries
-        qhat = torch.cat([qhat, queries_rest], dim=-1)
-        khat = torch.cat([khat, keys_rest], dim=-1)
-
-        return qhat, khat
-
-    def _draw_noise(self, queries):
+    def forward(self, shape, num_realizations=None):
         """
         generate the random QBar and Kbar, depending on the parameters,
-        and store them in the module.
         Args:
-            queries: (batchsize, num_heads, keys_dim, *shape)
+            shape: The outer shape of the inputs: (batchsize, *size)
         """
-        batchsize = queries.shape[0]
-        original_shape = queries.shape[3:]
+        batchsize = 1
+        original_shape = shape[1:]
 
         # decide on the size of the signal to generate
         # (larger than desired to avoid border effects)
         shape = [4*k+s for (k, s) in zip(self.kernel_size, original_shape)]
 
+        # the number of realizations is overrided by the function argument if provided
+        if num_realizations is None:
+            num_realizations = self.num_realizations
+
         # draw noise of appropriate shape on the right device
         z = torch.randn(
-            batchsize*self.num_realizations,
+            batchsize*num_realizations,
             self.num_heads * self.in_features,
             *shape,
-            device=self.conv_q.weight.device) / math.sqrt(self.num_realizations * self.in_features)
+            device=self.conv_q.weight.device)
 
         # apply convolution, get (batchsize*num_realizations, num_heads*keys_dim, *shape)
-        self.kbar = self.conv_q(z)
-        self.qbar = self.conv_k(z)
+        kbar = self.conv_q(z)
+        qbar = self.conv_k(z)
 
-        # truncate to desired shape
+        # truncate to desired shape (remove the start to avoid the border effects)
         for dim in range(len(shape)):
             k = self.kernel_size[dim]
             s = original_shape[dim]
 
-            indices = [slice(batchsize*self.num_realizations),
+            indices = [slice(batchsize*num_realizations),
                        slice(self.num_heads*self.in_features)] + [slice(k, k+s, 1), ]
-            self.qbar = self.qbar[indices]
-            self.kbar = self.kbar[indices]
+            qbar = qbar[indices]
+            kbar = kbar[indices]
 
         # making (batchsize, num_realizations, num_heads, keys_dim, *shape)
-        self.kbar = self.kbar.view(batchsize, self.num_realizations,
+        kbar = kbar.view(batchsize, num_realizations,
                          self.num_heads, self.in_features, *original_shape)
-        self.qbar = self.qbar.view(batchsize, self.num_realizations,
+        qbar = qbar.view(batchsize, num_realizations,
                          self.num_heads, self.in_features, *original_shape)
 
+        # permuting to be 
+        # (batchsize, *shape, num_heads, keys_dim, num_realizations) as desired
+        qbar = qbar.permute(0, *[x for x in range(4, self.ndim+4)], 2, 3, 1)
+        kbar = kbar.permute(0, *[x for x in range(4, self.ndim+4)], 2, 3, 1)
+
+        # final scaling
+        scale = (num_realizations * self.in_features)**0.25
+        return (qbar/scale, kbar/scale)
 
 
-class SineSPE(nn.Module):
-    """Sinusoidal stochastic positional encoding.
+class SPEFilter(nn.Module):
+    """Stochastic positional encoding filter
+
+    Applies a positional code provided by a SPE module on actual queries and keys.
+    Implements gating, i.e. some "dry" parameter, that lets original queries and keys through if activated.
 
     Args:
-        num_heads: The number of attention heads.
-        in_features: The number of input features per attention head.
-            If the actual key/query dimension is greater, only the
-            first `in_features` will be used and the rest will be
-            copied to the output unchanged. This is useful for keeping
-            some features non-positional.
-        num_realizations: The number of realizations of the stochastic
-            process (R).
-        num_sines: The number of sin and cos components (K).
-        max_len: The maximum expected length of keys and queries. Can be
-            set either here or by calling `reset()`, otherwise it is
-            inferred from the actual keys and queries.
+    gated: whether to use the gated version, which learns to balance
+        positional and positionless features.
+    code_shape: the inner shape of the codes, i.e. (num_heads, key_dim, num_realizations),
+        as given by `spe.code_shape`
     """
-
     def __init__(
         self,
-        num_heads: int = 8,
-        in_features: int = 64,
-        num_realizations: int = 256,
-        num_sines: int = 10,
-        max_len: Optional[int] = None,
+        gated: bool = True,
+        code_shape: Optional[Tuple[int, int, int]] = None,
     ):
-        super(SineSPE, self).__init__()
+        super(SPEFilter, self).__init__()
 
-        # saving dimensions
-        self.num_heads = num_heads
-        self.in_features = in_features
-        self.num_sines = num_sines
-        self.num_realizations = num_realizations
+        self.gated = gated
+        self.code_shape = code_shape
 
-        # register the parameter
-        for param in ['freqs', 'offsets', 'gains']:
-            self.register_parameter(
-                param,
-                nn.Parameter(
-                    torch.randn(
-                        num_heads,
-                        in_features,
-                        num_sines
-                    )
-                )
-            )
-
-        # bias initial frequencies to low values for long term range
-        self.freqs.data[...] -= 5.
-
-        # reset qbar and kbar
-        self.reset(max_len)
-
-    def reset(self, max_len: Optional[int] = None):
-        """
-        Reset positional encodings.
-
-        At training, this is typically done for each new batch.
-        At testing, this is typically never done.
-
-        Args:
-            max_len: The maximum expected length of keys and queries.
-        """
-        self.qbar = None
-        self.kbar = None
-        if max_len is not None or not hasattr(self, 'max_len'):
-            self.max_len = max_len
+        # create the gating parameters if required
+        if gated:
+            if code_shape is None:
+                raise RuntimeError('code_shape has to be provided if gated is True.')
+            self.register_parameter('gate', nn.Parameter(
+                torch.randn(code_shape[:-1])
+            ))
 
     def forward(
-        self, queries: torch.Tensor, keys: torch.Tensor
+        self,
+        queries: torch.Tensor,
+        keys: torch.Tensor,
+        code: Tuple[torch.Tensor, torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Apply SPE to queries and keys.
+        Apply SPE on keys with a given code.
 
         Expects keys and queries of shape `(batch_size, ..., num_heads,
         key_dim)` and outputs keys and queries of shape `(batch_size,
-        ..., num_heads, num_realizations + key_dim - in_features)`.
+        ..., num_heads, num_realizations)`. code is the tuple
+        of the 2 tensors provided by the code instance, each one of
+        shape (1, ..., num_heads, key_dim, num_realizations)
         """
         assert (queries.shape == keys.shape), \
             "As of current implementation, queries and keys must have the same shape. "\
             "got queries: {} and keys: {}".format(queries.shape, keys.shape)
 
-        if queries.shape[-1] < self.in_features:
-            raise ValueError('Expected keys/queries of dimension at least '
-                             f'{self.in_features}, got {queries.shape[-1]}.')
+        # qbar and kbar are (1, *shape, num_heads, keys_dim, num_realizations)
+        (qbar, kbar) = code
 
-        # split off the non-positional part
-        queries, queries_rest = _split_features(queries, self.in_features)
-        keys, keys_rest = _split_features(keys, self.in_features)
+        # check that codes have the shape we are expecting
+        if self.code_shape is not None and qbar.shape[-3:-1] != self.code_shape:
+            raise ValueError(
+                f'The inner shape of codes is {qbar.shape[-3:-1]}, '
+                f'but expected {self.code_shape}')
 
-        length = keys.shape[1]
-        if self.qbar is None:
-            if self.max_len is None:
-                self.max_len = length
-            self._draw_noise()
-        if self.qbar.shape[1] < length:
-            raise RuntimeError(f'Keys/queries have length {length}, '
-                               f'but expected at most {self.qbar.shape[1]}')
-        desired_shape = (1, self.qbar.shape[1], *queries.shape[2:], self.num_realizations)
-        if self.qbar.shape[2:] != desired_shape[2:]:
-            raise RuntimeError(f'Positional encodings have shape {self.qbar.shape}, '
-                               f'but need {desired_shape} for queries of shape '
-                               f'{queries.shape}')
+        # check shapes: size of codes should be bigger than queries, keys
+        code_size = qbar.shape[1:-3]
+        query_size = queries.shape[1:-2]
+        if (len(code_size) != len(query_size)
+            or torch.any(
+                torch.tensor(code_size) < torch.tensor(query_size)
+            )):
+                raise ValueError(f'Keys/queries have length {query_size}, '
+                                 f'but expected at most {code_size}')
+        if qbar.shape[-3:-1] != queries.shape[-2:]:
+            raise ValueError(f'shape mismatch. codes have shape {qbar.shape}, '
+                             f'but queries are {queries.shape}')
 
-        # sum over the keys_dim after multiplying by queries and keys
-        # qbar/kbar is (1, max_len, ...), truncating and broadcasting over the batch
-        qhat = (self.qbar[:, :length] * queries[..., None]).sum(axis=-2)
-        khat = (self.kbar[:, :length] * keys[..., None]).sum(axis=-2)
+        # truncate qbar and kbar for matching current queries and keys,
+        # but only if we need to
+        for dim in range(len(query_size)):
+            if code_size[dim] > query_size[dim]:
+                indices = [slice(1), *[slice(qbar.shape[1+k]) for k in range(dim)],
+                           slice(query_size[dim])]
+                qbar = qbar[indices]
+                kbar = kbar[indices]
 
-        # concatenate with the non-positional part of keys and queries
-        qhat = torch.cat([qhat, queries_rest], dim=-1)
-        khat = torch.cat([khat, keys_rest], dim=-1)
+        # apply gate if required
+        if self.gated:
+            # incorporate the constant bias for Pd if required. First draw noise
+            # such that noise noise^T = 1, for each head, feature, realization.
+            # qbar is : (1, *shape, num_heads, keys_dim, num_realizations)
+            in_features = qbar.shape[-2]
+            num_realizations = qbar.shape[-1]
+            gating_noise = torch.randn(
+                self.code_shape+(num_realizations,),
+                device=queries.device) / (in_features * num_realizations)**0.25
+            # normalize it so that it's an additive 1 to Pd
+            #gating_noise = gating_noise / gating_noise.norm(dim=2, keepdim=True)
 
+            # constrain the gate parameter to be in [0 1]
+            gate = torch.sigmoid(self.gate[..., None])
+
+            # qbar is (1, *shape, num_heads, keys_dim, num_realizations)
+            # gating noise is (num_heads, keys_dim, num_realizations)
+            # gate is (num_heads, keys_dim, 1)
+            #import ipdb; ipdb.set_trace()
+            qbar = torch.sqrt(1.-gate) * qbar  + torch.sqrt(gate) * gating_noise
+            kbar = torch.sqrt(1.-gate) * kbar  + torch.sqrt(gate) * gating_noise
+
+        # sum over d after multiplying by queries and keys
+        # qbar/kbar are (1, *shape, num_heads, keys_dim, num_realizations)
+        # queries/keys  (batchsize, *shape, num_heads, keys_dim)
+        qhat = (qbar * queries[..., None]).sum(axis=-2)
+        khat = (kbar * keys[..., None]).sum(axis=-2)
+
+        # result is (batchsize, ..., num_heads, num_realizations)
         return qhat, khat
-
-    def _draw_noise(self):
-        """
-        Generate the random QBar and Kbar, depending on the parameters,
-        and store them in the module.
-        """
-        # build omega_q and omega_k,
-        # with shape (num_heads, keys_dim, length, 2*num_sines)
-        indices = torch.linspace(0, self.max_len-1, self.max_len, device=self.freqs.device)
-
-        # making sure the frequencies are in [0, 0.5]
-        freqs = torch.sigmoid(self.freqs[:, :, None, :])/2.
-
-        phases_q = (
-            2 * math.pi
-            * freqs * indices[None, None, :, None]
-            + self.offsets[:, :, None, :]
-        )
-        omega_q = torch.stack([torch.cos(phases_q), torch.sin(phases_q)], dim=-1).view(
-            1, self.num_heads, self.in_features, self.max_len, 2*self.num_sines
-        )
-
-        phases_k = (
-            2 * math.pi
-            * freqs * indices[None, None, :, None]
-        )
-        omega_k = torch.stack([torch.cos(phases_k), torch.sin(phases_k)], dim=-1).view(
-            1, self.num_heads, self.in_features, self.max_len, 2*self.num_sines
-        )
-
-        # gains is (num_heads, keys_dim, 2*num_sines). Making then nonnegative with softplus
-        gains = nn.functional.softplus(self.gains).repeat(1, 1, 2)
-
-        # draw noise of appropriate shape on the right device
-        z = torch.randn(
-            1, self.num_heads, self.in_features, 2 * self.num_sines,
-            self.num_realizations,
-            device=self.freqs.device) / math.sqrt(self.num_realizations * self.in_features)
-
-        # scale each of the 2*num_sines by the appropriate gain
-        # z is still (1, num_heads, keys_dim, 2*num_sines, num_realizations)
-        z = z * gains[None, ..., None]
-
-        # computing the sum over the sines.
-        # gets (1, num_heads, keys_dim, length, num_realizations)
-        self.qbar = torch.matmul(omega_q, z)
-        self.kbar = torch.matmul(omega_k, z)
-
-        # permuting them to be (1, length, num_heads, keys_dim, num_realizations)
-        self.qbar = self.qbar.permute(0, 3, 1, 2, 4)
-        self.kbar = self.kbar.permute(0, 3, 1, 2, 4)
-
-
-
-def _split_features(x: torch.Tensor, num_positional: int) -> torch.Tensor:
-    return x.split([num_positional, x.shape[-1] - num_positional], dim=-1)
