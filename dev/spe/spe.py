@@ -194,7 +194,7 @@ class ConvSPE(nn.Module):
         scale = math.sqrt(torch.prod(torch.tensor(kernel_size))/2)
         self.conv_q.weight.data = self.conv_q.weight.data / scale
         self.conv_k.weight.data = self.conv_k.weight.data / scale
-        
+
         self.code_shape = (num_heads, in_features)
 
     def forward(self, shape, num_realizations=None):
@@ -241,7 +241,7 @@ class ConvSPE(nn.Module):
         qbar = qbar.view(batchsize, num_realizations,
                          self.num_heads, self.in_features, *original_shape)
 
-        # permuting to be 
+        # permuting to be
         # (batchsize, *shape, num_heads, keys_dim, num_realizations) as desired
         qbar = qbar.permute(0, *[x for x in range(4, self.ndim+4)], 2, 3, 1)
         kbar = kbar.permute(0, *[x for x in range(4, self.ndim+4)], 2, 3, 1)
@@ -278,7 +278,7 @@ class SPEFilter(nn.Module):
             if code_shape is None:
                 raise RuntimeError('code_shape has to be provided if gated is True.')
             self.register_parameter('gate', nn.Parameter(
-                torch.randn(code_shape[:-1])
+                torch.randn(code_shape)
             ))
 
     def forward(
