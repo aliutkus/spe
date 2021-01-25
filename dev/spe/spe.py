@@ -191,7 +191,7 @@ class ConvSPE(nn.Module):
         self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
         self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)
 
-        scale = math.sqrt(torch.prod(torch.tensor(kernel_size))/2)
+        scale = math.sqrt(torch.prod(torch.tensor(kernel_size).float())/2)
         self.conv_q.weight.data = self.conv_q.weight.data / scale
         self.conv_k.weight.data = self.conv_k.weight.data / scale
         
@@ -278,7 +278,7 @@ class SPEFilter(nn.Module):
             if code_shape is None:
                 raise RuntimeError('code_shape has to be provided if gated is True.')
             self.register_parameter('gate', nn.Parameter(
-                torch.randn(code_shape[:-1])
+                torch.randn(code_shape)
             ))
 
     def forward(
