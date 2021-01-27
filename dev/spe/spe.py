@@ -44,8 +44,9 @@ class SineSPE(nn.Module):
                 )
             )
 
-        #self.gains.data[...] = 1.
-        #self.gains.data[...] /= torch.sqrt(self.gains.norm(dim=-1, keepdim=True))
+        # normalize the gains
+        self.gains.data[...] /= torch.sqrt(
+            self.gains.norm(dim=-1, keepdim=True)) / 2.
 
         # bias initial frequencies to low values for long term range
         self.freqs.data[...] -= 4.
