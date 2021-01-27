@@ -92,10 +92,13 @@ class SineSPE(nn.Module):
             1, self.num_heads, self.in_features, max_len, 2*self.num_sines
         )
 
-        # gains is (num_heads, keys_dim, 2*num_sines). Making then nonnegative with softplus
+        # gains is (num_heads, keys_dim, num_sines). Making then nonnegative with softplus
         gains = nn.functional.softplus(self.gains)
-        #gains = gains / torch.sqrt(gains.norm(dim=-1, keepdim=True))
-        gains = gains.repeat(1, 1, 2)
+
+        # now upsample it
+        gains = torch.stack(
+            (gains, gains), dim=-1).view(
+                self.num_heads, self.in_features, 2*self.num_sines)
 
         # the number of realizations is overrided by the function argument if provided
         if num_realizations is None:
