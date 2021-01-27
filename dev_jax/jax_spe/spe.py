@@ -38,7 +38,10 @@ class SineSPE(nn.Module):
             'freqs', params_shape,
             lambda *args: jax.random.normal(*args) - 4.)
         offsets = self.param('offsets', params_shape, jax.random.normal)
-        gains = self.param('gains', params_shape, jax.random.normal)
+        def init_gains(rng_key, shape):
+            gains = jax.random.normal(rng_key, shape)
+            return gains / (jnp.sqrt(jnp.linalg.norm(gains, axis=-1, keepdims=True)) / 2)
+        gains = self.param('gains', params_shape, init_gains)
 
         # build omega_q and omega_k,
         # with shape (num_heads, keys_dim, length, 2*num_sines)
@@ -64,8 +67,13 @@ class SineSPE(nn.Module):
             num_heads, in_features, length, 2*num_sines
         )
 
-        # gains is (num_heads, keys_dim, 2*num_sines). Making them nonnegative with softplus
-        gains = jax.nn.softplus(gains).repeat(2, axis=2)
+        # gains is (num_heads, keys_dim, num_sines). Making them nonnegative with softplus
+        gains = jax.nn.softplus(gains)
+
+        # now upsample it to 2 * num_sines
+        gains = jnp.stack(
+            [gains, gains], axis=-1
+        ).reshape(num_heads, in_features, 2 * num_sines)
 
         # draw noise of appropriate shape
         z = jax.random.normal(
@@ -120,4 +128,3 @@ def apply_spe(keys, spe):
     # sum over the keys_dim after multiplying by queries and keys
     # spe is (1, max_len, ...), truncating and broadcasting over the batch
     return (spe[:, :keys.shape[1]] * keys[..., None]).sum(axis=-2)
-
