@@ -124,29 +124,19 @@ class ConvSPE(nn.Module):
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size,) * ndim
 
-        # create the two convolution layers
+        # prepare 2 convolution layers with identical hyperparameters
         kernel_init = functools.partial(
             jax.random.uniform,
             minval=0.,
             maxval=1 / jnp.sqrt(jnp.prod(jnp.array(kernel_size)) / 2))
-        conv_q = nn.Conv.partial(
+        conv = nn.Conv.partial(
             features=num_heads * in_features,
             strides=(1,) * ndim,
             kernel_size=kernel_size,
             padding='VALID',
             bias=False,
             feature_group_count=num_heads * in_features,
-            kernel_init=kernel_init,
-            name='conv_q')
-        conv_k = nn.Conv.partial(
-            features=num_heads * in_features,
-            strides=(1,) * ndim,
-            kernel_size=kernel_size,
-            padding='VALID',
-            bias=False,
-            feature_group_count=num_heads * in_features,
-            kernel_init=kernel_init,
-            name='conv_k')
+            kernel_init=kernel_init)
 
         # decide on the size of the signal to generate
         # (larger than desired to avoid border effects)
@@ -160,8 +150,8 @@ class ConvSPE(nn.Module):
              num_heads * in_features))
 
         # apply convolution, get (batchsize*num_realizations, num_heads*keys_dim, *shape)
-        kbar = conv_q(z)
-        qbar = conv_k(z)
+        qbar = conv(z, name='conv_q')
+        kbar = conv(z, name='conv_k')
 
         # truncate to desired shape (remove the start to avoid the border effects)
         for dim in range(ndim):
@@ -173,9 +163,9 @@ class ConvSPE(nn.Module):
             kbar = kbar[indices]
 
         # making (batchsize, num_realizations, *shape, num_heads, keys_dim)
-        kbar = kbar.reshape(
-            batchsize, num_realizations, *original_shape, num_heads, in_features)
         qbar = qbar.reshape(
+            batchsize, num_realizations, *original_shape, num_heads, in_features)
+        kbar = kbar.reshape(
             batchsize, num_realizations, *original_shape, num_heads, in_features)
 
         # permuting to be
