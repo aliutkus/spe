@@ -1,3 +1,4 @@
+import functools
 import math
 from typing import Tuple, Union
 
@@ -11,12 +12,8 @@ class SineSPE(nn.Module):
     """Sinusoidal stochastic positional encoding.
 
     Args:
-        num_heads: The number of attention heads.
-        in_features: The number of input features per attention head.
-            If the actual key/query dimension is greater, only the
-            first `in_features` will be used and the rest will be
-            copied to the output unchanged. This is useful for keeping
-            some features non-positional.
+        rng_key: A PRNGKey.
+        key_shape: The shape of keys and queries.
         num_realizations: The number of realizations of the stochastic
             process (R).
         num_sines: The number of sin and cos components (K).
@@ -94,6 +91,99 @@ class SineSPE(nn.Module):
         qbar = jnp.transpose(qbar, (0, 3, 1, 2, 4))
         kbar = jnp.transpose(kbar, (0, 3, 1, 2, 4))
 
+        scale = jnp.sqrt(jnp.sqrt(jnp.reciprocal(num_realizations * in_features)))
+        return scale * qbar, scale * kbar
+
+
+class ConvSPE(nn.Module):
+    """
+    Convolutive stochastic positional encoding.
+
+    Args:
+        rng_key: A PRNGKey.
+        key_shape: The shape of keys and queries.
+        num_realizations: The number of realizations of the stochastic
+            process (R).
+        kernel_size: The size of the convolution kernel.
+    """
+
+    def apply(
+        self,
+        rng_key,
+        key_shape,
+        num_realizations: int = 256,
+        kernel_size: Union[int, Tuple[int, ...]] = 200,
+    ):
+        batchsize = 1
+        original_shape = key_shape[1:-2]
+        in_features = key_shape[-1]
+        num_heads = key_shape[-2]
+        ndim = len(original_shape)
+
+        # making kernel_size a list of length dimension in any case
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size,) * ndim
+
+        # create the two convolution layers
+        kernel_init = functools.partial(
+            jax.random.uniform,
+            minval=0.,
+            maxval=1 / jnp.sqrt(jnp.prod(jnp.array(kernel_size)) / 2))
+        conv_q = nn.Conv.partial(
+            features=num_heads * in_features,
+            strides=(1,) * ndim,
+            kernel_size=kernel_size,
+            padding='VALID',
+            bias=False,
+            feature_group_count=num_heads * in_features,
+            kernel_init=kernel_init,
+            name='conv_q')
+        conv_k = nn.Conv.partial(
+            features=num_heads * in_features,
+            strides=(1,) * ndim,
+            kernel_size=kernel_size,
+            padding='VALID',
+            bias=False,
+            feature_group_count=num_heads * in_features,
+            kernel_init=kernel_init,
+            name='conv_k')
+
+        # decide on the size of the signal to generate
+        # (larger than desired to avoid border effects)
+        shape = [4 * kernel_size[d] + original_shape[d] for d in range(ndim)]
+
+        # draw noise of appropriate shape on the right device
+        z = jax.random.normal(
+            rng_key,
+            (batchsize * num_realizations,
+             *shape,
+             num_heads * in_features))
+
+        # apply convolution, get (batchsize*num_realizations, num_heads*keys_dim, *shape)
+        kbar = conv_q(z)
+        qbar = conv_k(z)
+
+        # truncate to desired shape (remove the start to avoid the border effects)
+        for dim in range(ndim):
+            k = kernel_size[dim]
+            s = original_shape[dim]
+
+            indices = (slice(batchsize * num_realizations), slice(k, k+s, 1))
+            qbar = qbar[indices]
+            kbar = kbar[indices]
+
+        # making (batchsize, num_realizations, *shape, num_heads, keys_dim)
+        kbar = kbar.reshape(
+            batchsize, num_realizations, *original_shape, num_heads, in_features)
+        qbar = qbar.reshape(
+            batchsize, num_realizations, *original_shape, num_heads, in_features)
+
+        # permuting to be
+        # (batchsize, *shape, num_heads, keys_dim, num_realizations) as desired
+        qbar = jnp.transpose(qbar, [0, *range(2, ndim + 4), 1])
+        kbar = jnp.transpose(kbar, [0, *range(2, ndim + 4), 1])
+
+        # final scaling
         scale = jnp.sqrt(jnp.sqrt(jnp.reciprocal(num_realizations * in_features)))
         return scale * qbar, scale * kbar
 
