@@ -1,1 +1,1 @@
-from .spe import SineSPE, SPEGate, apply_spe
+from .spe import SineSPE, ConvSPE, SPEGate, apply_spe

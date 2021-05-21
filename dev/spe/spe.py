@@ -368,13 +368,13 @@ class SPEFilter(nn.Module):
     Args:
     gated: whether to use the gated version, which learns to balance
         positional and positionless features.
-    code_shape: the inner shape of the codes, i.e. (num_heads, key_dim, num_realizations),
+    code_shape: the inner shape of the codes, i.e. (num_heads, key_dim),
         as given by `spe.code_shape`
     """
     def __init__(
         self,
         gated: bool = True,
-        code_shape: Optional[Tuple[int, int, int]] = None,
+        code_shape: Optional[Tuple[int, int]] = None,
     ):
         super(SPEFilter, self).__init__()
 
