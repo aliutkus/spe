@@ -128,6 +128,58 @@ class SineSPE(nn.Module):
         scale = (num_realizations * self.in_features)**0.25
         return (qbar/scale, kbar/scale)
 
+    def get_posattn_matrix(self, max_len=2048):
+        indices = torch.linspace(0, max_len-1, max_len, device=self.freqs.device)
+
+        # making sure the frequencies are in [0, 0.5]
+        freqs = torch.sigmoid(self.freqs[:, :, None, :])/2.
+
+        phases_q = (
+            2 * math.pi
+            * freqs * indices[None, None, :, None]
+            + self.offsets[:, :, None, :]
+        )
+        omega_q = torch.stack([torch.cos(phases_q), torch.sin(phases_q)], dim=-1).view(
+            1, self.num_heads, self.in_features, max_len, 2*self.num_sines
+        )
+
+        phases_k = (
+            2 * math.pi
+            * freqs * indices[None, None, :, None]
+        )
+        omega_k = torch.stack([torch.cos(phases_k), torch.sin(phases_k)], dim=-1).view(
+            1, self.num_heads, self.in_features, max_len, 2*self.num_sines
+        )
+
+        # gains is (num_heads, keys_dim, 2*num_sines). Making then nonnegative with softplus
+        gains = nn.functional.softplus(self.gains)
+        #gains = gains / torch.sqrt(gains.norm(dim=-1, keepdim=True))
+        gains = torch.stack(
+            (gains, gains), dim=-1).view(
+                self.num_heads, self.in_features, 2*self.num_sines)
+
+        gains_squared_diag = torch.diag_embed(gains ** 2)
+
+        print ('[get posattn matrix] Omega_q: {}, lambda: {}, Omega_k: {}'.format(
+            omega_q.size(), gains_squared_diag.size(), omega_k.size()
+        ))
+        # print (gains_squared_diag[0, 0])
+
+        # get (1, num_heads, keys_dim) attention maps, each of size (max_len, max_len)
+        omega_q_mult_gains_squared_diag = torch.einsum(
+            'ihdmk, hdku -> ihdmu',
+            omega_q, gains_squared_diag
+        )
+        pos_attn_matrices = torch.einsum(
+            'ihdmk, ihdnk -> ihdmn',
+            omega_q_mult_gains_squared_diag, omega_k
+        )
+        print ('[get posattn matrix] pos_attn: {}'.format(
+            pos_attn_matrices.size()
+        ))
+
+        return pos_attn_matrices
+
 
 class ConvSPE(nn.Module):
     """
@@ -195,7 +247,7 @@ class ConvSPE(nn.Module):
         self.conv_q.weight.data = torch.rand(self.conv_q.weight.shape)
         self.conv_k.weight.data = torch.rand(self.conv_k.weight.shape)
 
-        scale = math.sqrt(torch.prod(torch.tensor(kernel_size))/2)
+        scale = math.sqrt(torch.prod(torch.tensor(kernel_size).float())/2)
         self.conv_q.weight.data = self.conv_q.weight.data / scale
         self.conv_k.weight.data = self.conv_k.weight.data / scale
 
@@ -253,6 +305,58 @@ class ConvSPE(nn.Module):
         # final scaling
         scale = (num_realizations * self.in_features)**0.25
         return (qbar/scale, kbar/scale)
+
+    def get_posattn_matrix(self, shape, num_realizations=None):
+        batchsize = 1
+        original_shape = shape[1:]
+
+        # decide on the size of the signal to generate
+        # (larger than desired to avoid border effects)
+        shape = [4*k+s for (k, s) in zip(self.kernel_size, original_shape)]
+
+        # the number of realizations is overrided by the function argument if provided
+        if num_realizations is None:
+            num_realizations = self.num_realizations
+
+        # draw noise of appropriate shape on the right device
+        z = torch.randn(
+            batchsize*num_realizations,
+            self.num_heads * self.in_features,
+            *shape,
+            device=self.conv_q.weight.device)
+
+        # apply convolution, get (batchsize*num_realizations, num_heads*keys_dim, *shape)
+        kbar = self.conv_q(z)
+        qbar = self.conv_k(z)
+
+        for dim in range(len(shape)):
+            k = self.kernel_size[dim]
+            s = original_shape[dim]
+
+            indices = [slice(batchsize*num_realizations),
+                       slice(self.num_heads*self.in_features)] + [slice(k, k+s, 1), ]
+            qbar = qbar[indices]
+            kbar = kbar[indices]
+
+        print ('[get posattn matrix] Qbar: {}, Kbar: {}'.format(
+            qbar.size(), kbar.size()
+        ))
+
+        # get (num_heads * keys_dim) attention maps, each of size (max_len, max_len) 
+        pos_attn_matrices = torch.einsum(
+            'rdm, rdn -> dmn',
+            qbar, kbar
+        )
+        print ('[get posattn matrix] pos_attn: {}'.format(
+            pos_attn_matrices.size()
+        ))
+
+        # reshape attention maps to the same shape as those of SineSPE
+        pos_attn_matrices = pos_attn_matrices.view(
+            batchsize, self.num_heads, self.in_features, original_shape[-1], original_shape[-1]
+        )
+
+        return pos_attn_matrices
 
 
 class SPEFilter(nn.Module):
