@@ -69,7 +69,7 @@ def eval(model, dloader):
   zero_counts_idx = np.where(counts == 0)[0]
   if len(zero_counts_idx) > 0:
     counts = counts[ : zero_counts_idx[0] ]
-    loss_rec = zero_counts_idx[ : zero_counts_idx[0] ]
+    loss_rec = loss_rec[ : zero_counts_idx[0] ]
 
   return loss_rec / counts, avg_losses, avg_ext_losses
 
