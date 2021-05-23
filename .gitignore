@@ -109,6 +109,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+**/.vscode/
 
 # Spyder project settings
 .spyderproject
@@ -127,3 +128,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# directories for checkpoints & generations
+**/checkpoint
+**/ckpt*
+**/gen*/

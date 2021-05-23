@@ -1,0 +1,9 @@
+ckpt_path:          ckpt_spe/0128_l24_n2048_SineSPENew-r64-s5_sharePE/params/ep078_loss1.532_params.pt
+gpuid:              0
+gen_output_dir:     generations/SineSPE
+gen_n_pieces:       5
+gen_max_events:     2048
+gen_max_bars:       32
+sampling:
+    temp:           1.2
+    top_p:          0.9

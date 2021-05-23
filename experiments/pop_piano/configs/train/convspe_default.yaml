@@ -1,0 +1,33 @@
+data_loader:
+  batch_size:       4
+model:
+  pe_type:          ConvSPE
+  d_model:          512
+  d_embed:          512
+  max_len:          2048
+  n_layer:          24
+  n_head:           8
+  d_ff:             2048
+  feature_map:
+    n_dims:         128
+  positional_encoder:
+    in_features:          64
+    num_realizations:     64
+    kernel_size:          128
+  share_pe:               True
+  share_spe_filter:       False
+  use_gated_filter:       True
+
+
+training:
+  num_epochs:       200
+  ckpt_interval:    2     # epochs
+  log_interval:     200   # steps
+
+  lr:               2.0e-4
+  lr_scheduler:
+    eta_min:        5.0e-6
+    T_max:          55020  # 140 epochs
+  warmup_steps:     200
+
+  feat_redraw_prob: 0.05

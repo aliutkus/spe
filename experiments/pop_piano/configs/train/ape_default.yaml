@@ -1,0 +1,26 @@
+data_loader:
+  batch_size:       4
+model:
+  pe_type:          APE
+  d_model:          512
+  d_embed:          512
+  max_len:          2048
+  n_layer:          24
+  n_head:           8
+  d_ff:             2048
+  feature_map:
+    n_dims:         128
+
+
+training:
+  num_epochs:       200
+  ckpt_interval:    3  # epochs
+  log_interval:     200  # steps
+
+  lr:               1.0e-4
+  lr_scheduler:
+    eta_min:        5.0e-6
+    T_max:          62880  # 160 epochs
+  warmup_steps:     200
+
+  feat_redraw_prob: 0.05
