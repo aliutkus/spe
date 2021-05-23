@@ -24,6 +24,7 @@ model:
 
 
 training:
+  gpuid:            0
   num_epochs:       200
   ckpt_dir:         './ckpt/SineSPE'
   ckpt_interval:    3  # epochs

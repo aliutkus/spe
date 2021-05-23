@@ -3,10 +3,7 @@ sys.path.append('./models')
 import torch
 import numpy as np
 
-from models.music_performer_ape import MusicPerformer
-from models.music_performer_spe import MusicPerformerSPE
-
-from utils import pickle_load
+from utils import pickle_load, load_model
 from convert2midi import event_to_midi
 from generate_utils import generate_fast
 
@@ -15,7 +12,6 @@ train_conf_path = sys.argv[1]
 inf_conf_path = sys.argv[2]
 train_conf = yaml.load(open(train_conf_path, 'r'), Loader=yaml.FullLoader)
 inf_conf = yaml.load(open(inf_conf_path, 'r'), Loader=yaml.FullLoader)
-
 
 REMI_MODEL_VOCAB_SIZE = 333
 gpuid = inf_conf['gpuid']
@@ -35,41 +31,7 @@ if __name__ == "__main__":
   sampling_temp = inf_conf['sampling']['temp']
   sampling_top_p = inf_conf['sampling']['top_p']
 
-  model_conf = train_conf['model']
-  if model_conf['pe_type'] == 'APE':
-    model = MusicPerformer(
-      REMI_MODEL_VOCAB_SIZE, model_conf['n_layer'], model_conf['n_head'], 
-      model_conf['d_model'], model_conf['d_ff'], model_conf['d_embed'],
-      favor_feature_dims=model_conf['feature_map']['n_dims']
-    ).cuda(gpuid)
-  elif model_conf['pe_type'] == 'SineSPE':
-    model = MusicPerformerSPE(
-      REMI_MODEL_VOCAB_SIZE, model_conf['n_layer'], model_conf['n_head'], 
-      model_conf['d_model'], model_conf['d_ff'], model_conf['d_embed'],
-      favor_feature_dims=model_conf['feature_map']['n_dims'],
-      share_pe=model_conf['share_pe'], 
-      share_spe_filter=model_conf['share_spe_filter'],
-      spe_type='SineSPE',
-      use_gated_filter=model_conf['use_gated_filter'],
-      spe_module_params={
-        'num_sines': model_conf['positional_encoder']['num_sines'],
-        'num_realizations': model_conf['positional_encoder']['num_realizations']
-      }
-    ).cuda(gpuid)
-  elif model_conf['pe_type'] == 'ConvSPE':
-    model = MusicPerformerSPE(
-      REMI_MODEL_VOCAB_SIZE, model_conf['n_layer'], model_conf['n_head'], 
-      model_conf['d_model'], model_conf['d_ff'], model_conf['d_embed'],
-      favor_feature_dims=model_conf['feature_map']['n_dims'],
-      share_pe=model_conf['share_pe'], 
-      share_spe_filter=model_conf['share_spe_filter'],
-      spe_type='ConvSPE',
-      use_gated_filter=model_conf['use_gated_filter'],
-      spe_module_params={
-        'kernel_size': model_conf['positional_encoder']['kernel_size'],
-        'num_realizations': model_conf['positional_encoder']['num_realizations']
-      }
-    ).cuda(gpuid)
+  model = load_model(train_conf['model'], gpuid, REMI_MODEL_VOCAB_SIZE)
 
   pretrained_dict = torch.load(ckpt_path)
   pretrained_dict = {

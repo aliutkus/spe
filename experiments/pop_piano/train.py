@@ -1,12 +1,10 @@
 import sys, os, time, random
 sys.path.append('./models')
 
-from models.music_performer_ape import MusicPerformer
-from models.music_performer_spe import MusicPerformerSPE
 from dataloader import REMIFullSongTransformerDataset
 from torch.utils.data import DataLoader
 
-from utils import pickle_load
+from utils import pickle_load, load_model
 from torch import optim
 import torch
 import numpy as np
@@ -15,12 +13,12 @@ import yaml
 train_conf_path = sys.argv[1]
 train_conf = yaml.load(open(train_conf_path, 'r'), Loader=yaml.FullLoader)
 
-gpuid = 0
+train_steps = 0
+train_conf_ = train_conf['training']
+
+gpuid = train_conf_['gpuid']
 torch.cuda.set_device(gpuid)
 
-train_steps = 0
-
-train_conf_ = train_conf['training']
 warmup_steps = train_conf_['warmup_steps']
 max_lr = train_conf_['lr']
 min_lr = train_conf_['lr_scheduler']['eta_min']
@@ -173,41 +171,7 @@ if __name__ == "__main__":
                   val_dset, batch_size=batch_size, shuffle=True, num_workers=8
                 )
 
-  model_conf = train_conf['model']
-  if model_conf['pe_type'] == 'APE':
-    model = MusicPerformer(
-      dset.vocab_size, model_conf['n_layer'], model_conf['n_head'], 
-      model_conf['d_model'], model_conf['d_ff'], model_conf['d_embed'],
-      favor_feature_dims=model_conf['feature_map']['n_dims']
-    ).cuda(gpuid)
-  elif model_conf['pe_type'] == 'SineSPE':
-    model = MusicPerformerSPE(
-      dset.vocab_size, model_conf['n_layer'], model_conf['n_head'], 
-      model_conf['d_model'], model_conf['d_ff'], model_conf['d_embed'],
-      favor_feature_dims=model_conf['feature_map']['n_dims'],
-      share_pe=model_conf['share_pe'], 
-      share_spe_filter=model_conf['share_spe_filter'],
-      spe_type='SineSPE',
-      use_gated_filter=model_conf['use_gated_filter'],
-      spe_module_params={
-        'num_sines': model_conf['positional_encoder']['num_sines'],
-        'num_realizations': model_conf['positional_encoder']['num_realizations']
-      }
-    ).cuda(gpuid)
-  elif model_conf['pe_type'] == 'ConvSPE':
-    model = MusicPerformerSPE(
-      dset.vocab_size, model_conf['n_layer'], model_conf['n_head'], 
-      model_conf['d_model'], model_conf['d_ff'], model_conf['d_embed'],
-      favor_feature_dims=model_conf['feature_map']['n_dims'],
-      share_pe=model_conf['share_pe'], 
-      share_spe_filter=model_conf['share_spe_filter'],
-      spe_type='ConvSPE',
-      use_gated_filter=model_conf['use_gated_filter'],
-      spe_module_params={
-        'kernel_size': model_conf['positional_encoder']['kernel_size'],
-        'num_realizations': model_conf['positional_encoder']['num_realizations']
-      }
-    ).cuda(gpuid)
+  model = load_model(train_conf['model'], gpuid, dset.vocab_size)
 
   if pretrained_param_path:
     pretrained_dict = torch.load(pretrained_param_path)
