@@ -1,8 +1,6 @@
 import sys, os
-import spe
 sys.path.append('./models')
 import torch
-from torch import nn, optim
 import numpy as np
 
 from models.music_performer_ape import MusicPerformer
