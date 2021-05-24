@@ -6,6 +6,12 @@ In this paper, we propose **Stochastic Positional Encoding** (SPE), which provab
 
 ![image](https://user-images.githubusercontent.com/8046580/119335679-fcf09280-bc8c-11eb-9525-bec9372bf6fb.png)
 
-Note: If you plan to reproduce our experiments, clone this repository with `--recurse-submodules` or run `git submodule init && git submodule update` after cloning. This will make sure all the custom dependencies are available.
-
 Check out also the [companion website](https://cifkao.github.io/spe/) with music examples.
+
+## SPE implementation
+
+We have implemented SPE in PyTorch and JAX/Flax. Each implementation is available as a separate Python package under [`src`](./src).
+
+## Experiments
+
+Each of the 3 experiments (LRA, pop piano generation, groove continuation) has a dedicated directory under [`experiments`](./experiments). See the README files there for how to set up the environment and prepare the datasets. To make sure you have the custom dependencies for each experiment, clone this repository with `--recurse-submodules` or run `git submodule init && git submodule update` after cloning.
