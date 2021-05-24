@@ -133,3 +133,7 @@ dmypy.json
 **/checkpoint
 **/ckpt*
 **/gen*/
+
+# dataset
+*.tar.gz
+# **/*_dataset/
