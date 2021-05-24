@@ -136,4 +136,4 @@ dmypy.json
 
 # dataset
 *.tar.gz
-# **/*_dataset/
+**/*_dataset/
