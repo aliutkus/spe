@@ -1,0 +1,13 @@
+#!/bin/bash
+if [[ $# -ne 2 ]]; then
+  echo "Expected exactly 2 arguments: config, model_dir" >&2
+  exit 1
+fi
+
+config=$1
+model_dir=$2
+
+set -ex
+mkdir -p "$model_dir"
+python -m lra_benchmarks.text_classification.train --config="$config" --model_dir="$model_dir/" --task_name=imdb_reviews
+python -m lra_benchmarks.text_classification.train --config="$config" --model_dir="$model_dir/" --task_name=imdb_reviews --test_only
