@@ -16,6 +16,8 @@ setup(
     description='stochastic positional encoding for PyTorch',
     long_description=long_description,
     long_description_content_type='text/markdown',
+    author='Ondřej Cífka',
+    author_email='cifkao@gmail.com',
     packages=['jax_spe'],
     install_requires=[
         'jax>=0.2.6',
