@@ -5,8 +5,11 @@ This directory corresponds to **Section 3.2** of the paper.
 ## Prerequisites
 * Python >3.6
 * Additional dependencies
-  * our `fast_transformers` implementation (?)
-  * `miditoolkit`
+```bash
+pip3 install miditoolkit
+pip3 install -e ../groove/lib/fast-transformers
+pip3 install -e ../../src/pytorch
+```
 
 ## Usage Notes
 For detailed configuration settings, please read the `yaml` files under `configs/` directory.
