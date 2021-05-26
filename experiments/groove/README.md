@@ -9,6 +9,7 @@ In a Python 3.7 environment:
 pip install -r requirements.txt
 pip install -e lib/fast-transformers
 pip install -e ../../src/pytorch
+pip install -e ./src
 ```
 
 ## Data
