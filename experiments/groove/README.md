@@ -25,4 +25,4 @@ Optionally, use `--name` to specify the experiment name for Neptune (otherwise i
 
 ## Evaluation
 
-The evaluation metrics are implemented in [`spe_music.style_eval`](./src/spe_music/style_eval) module. Running the evaluation consists of two steps: 1. generate continuations using the [`exp/continuation.ipynb`](./exp/continuation.ipynb) notebook, 2. compute metrics using the [`exp/style_eval_midi.ipynb`](./exp/continuation.ipynb) notebook.
+The evaluation metrics are implemented in [`spe_music.style_eval`](./src/spe_music/style_eval) module. Running the evaluation consists of two steps: 1. generate continuations using the [`exp/continuation.ipynb`](./exp/continuation.ipynb) notebook, 2. compute metrics using the [`exp/style_eval_midi.ipynb`](./exp/style_eval_midi.ipynb) notebook.
