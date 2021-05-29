@@ -1,7 +1,6 @@
 from typing import Iterable
 import muspy
 import numpy as np
-from note_seq import midi_io
 
 _EPSILON = 1e-9
 
