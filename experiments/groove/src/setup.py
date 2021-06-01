@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="spe-music",
-    author="Anonymous authors",
+    author="Ondřej Cífka, Shih-Lun Wu",
     description="Stochasic positional encoding - Music experiments",
     packages=setuptools.find_packages(),
 )
