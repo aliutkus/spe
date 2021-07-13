@@ -12,7 +12,7 @@ pip install jax==0.2.6 jaxlib==0.1.57+cuda102 -f https://storage.googleapis.com/
 Install the rest of the requirements:
 ```bash
 pip install -r requirements.txt
-pip install -e ./fast_attention ./long-range-arena ../../src/flax
+pip install -e ./fast_attention ./long-range-arena ../../src/jax
 ```
 
 ## Data
