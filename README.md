@@ -11,7 +11,7 @@ Check out also the [companion website](https://cifkao.github.io/spe/) with music
 Citation:
 ```bibtex
 @inproceedings{pmlr-v139-liutkus21a,
-  title = 	 {Relative Positional Encoding for Transformers with Linear Complexity},
+  title = 	 {Relative Positional Encoding for {Transformers} with Linear Complexity},
   author =       {Liutkus, Antoine and C{\'i}fka, Ond{\v r}ej and Wu, Shih-Lun and {\c S}im{\c s}ekli, Umut and Yang, Yi-Hsuan and Richard, Ga{\"e}l},
   booktitle = 	 {Proceedings of the 38th International Conference on Machine Learning},
   pages = 	 {7067--7079},
