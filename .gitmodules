@@ -3,4 +3,4 @@
 	url = https://github.com/cifkao/long-range-arena.git
 [submodule "experiments/groove/lib/fast-transformers"]
 	path = experiments/groove/lib/fast-transformers
-	url = git@github.com:cifkao/fast-transformers.git
+	url = https://github.com/cifkao/fast-transformers.git
