@@ -2,6 +2,8 @@
 
 Original LRA repository: [google-research/long-range-arena](https://github.com/google-research/long-range-arena)
 
+**Note:** A known bug in the ListOps task removes the brackets from the input, making the task essentially impossible to solve. The bug appears to have been fixed in the upstream repository in [c209b2a4](https://github.com/google-research/long-range-arena/commit/c209b2a48eedfd7ffcd13c679f97f3fa466c47bc), but the change is not merged here and we have not tested it. Our results were produced before the fix and are therefore affected by the bug.
+
 ## Setup
 
 Install JAX (adjust the `jaxlib` version according to your CUDA version):
