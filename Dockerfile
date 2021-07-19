@@ -25,10 +25,7 @@ COPY . /spe
 
 RUN python -m pip install --upgrade pip
 RUN git submodule init && git submodule update
-RUN ls experiments/lra
-RUN cd experiments/lra & pip install -e ./fast_attention ./long-range-arena ../../src/jax
-RUN pip install --upgrade jaxlib==0.1.68+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
-RUN pip install -r experiments/lra/requirements.txt
+RUN cd experiments/lra && pip install -e ./fast_attention ./long-range-arena ../../src/jax
 
 ARG SSH_PRIVATE_KEY
 RUN mkdir /root/.ssh/
@@ -40,3 +37,6 @@ RUN ssh-keyscan github.com >> /root/.ssh/known_hosts
 
 RUN git clone git@github.com:maximzubkov/positional-bias.git
 RUN cd positional-bias && pip install -e .
+
+RUN pip install --upgrade jaxlib==0.1.68+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+RUN pip install -r experiments/lra/requirements.txt
