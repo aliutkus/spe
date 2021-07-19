@@ -27,15 +27,10 @@ RUN python -m pip install --upgrade pip
 RUN git submodule init && git submodule update
 RUN cd experiments/lra && pip install -e ./fast_attention ./long-range-arena ../../src/jax
 
-ARG SSH_PRIVATE_KEY
-RUN mkdir /root/.ssh/
-RUN echo "${SSH_PRIVATE_KEY}" > /root/.ssh/id_rsa
-RUN chmod 600 /root/.ssh/id_rsa
+ARG GIT_TOKEN
+RUN git config --global url."https://${GIT_TOKEN}:@github.com/".insteadOf "https://github.com/"
 
-RUN touch /root/.ssh/known_hosts
-RUN ssh-keyscan github.com >> /root/.ssh/known_hosts
-
-RUN git clone git@github.com:maximzubkov/positional-bias.git
+RUN git clone https://github.com/maximzubkov/positional-bias.git
 RUN cd positional-bias && pip install -e .
 
 RUN pip install --upgrade jaxlib==0.1.68+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
