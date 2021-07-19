@@ -3,7 +3,7 @@ FROM nvidia/cuda:11.0-cudnn8-devel-ubuntu18.04
 ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y \
+    && apt-get install -y \
                        build-essential \
                        ca-certificates \
                        wget \
@@ -20,12 +20,15 @@ RUN ln -sf $(which python3) /usr/bin/python \
 ENV LANG C.UTF-8
 ENV LC_ALL C.UTF-8
 
-WORKDIR /long-range-arena
-COPY . /long-range-arena
+WORKDIR /spe
+COPY . /spe
 
 RUN python -m pip install --upgrade pip
-RUN pip install -r requirements.txt
-RUN pip install --upgrade jaxlib==0.1.65+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+RUN git submodule init && git submodule update
+RUN ls experiments/lra
+RUN cd experiments/lra & pip install -e ./fast_attention ./long-range-arena ../../src/jax
+RUN pip install --upgrade jaxlib==0.1.68+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+RUN pip install -r experiments/lra/requirements.txt
 
 ARG SSH_PRIVATE_KEY
 RUN mkdir /root/.ssh/
