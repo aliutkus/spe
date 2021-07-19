@@ -134,7 +134,11 @@ dmypy.json
 **/checkpoint
 **/ckpt*
 **/gen*/
+**/data
+.idea
 
 # dataset
 *.tar.gz
 **/*_dataset/
+
+.DS_Store
