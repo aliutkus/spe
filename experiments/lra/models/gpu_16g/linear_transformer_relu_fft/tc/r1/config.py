@@ -16,24 +16,22 @@
 from fast_self_attention import fast_self_attention as favor
 import jax
 
-from lra_benchmarks.matching.configs import base_match_config
+from lra_benchmarks.text_classification.configs import base_tc_config
 
 
 def get_config():
   """Get the default hyperparameter configuration."""
-  config = base_match_config.get_config()
+  config = base_tc_config.get_config()
   config.random_seed = 0
   config.model_type = "transformer"
   config.attention_fn = favor.make_fast_generalized_attention(
     qkv_dim=config.qkv_dim // config.num_heads,
     features_type='deterministic',
-    kernel_fn=jax.lax.exp,
+    kernel_fn=jax.nn.relu,
     lax_scan_unroll=16)
   config.batch_size = 8
-  config.learning_rate = 0.005
-  config.num_train_steps = 15000
-  config.warmup = 3000
-  config.eval_frequency = 1500
+  config.learning_rate = config.learning_rate / 32 * 8
+  config.num_train_steps = 30000
 
   config.model_kwargs = dict(
     pos_bias_cfg=dict(

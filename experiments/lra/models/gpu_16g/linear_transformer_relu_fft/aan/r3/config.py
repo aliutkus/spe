@@ -27,7 +27,7 @@ def get_config():
   config.attention_fn = favor.make_fast_generalized_attention(
     qkv_dim=config.qkv_dim // config.num_heads,
     features_type='deterministic',
-    kernel_fn=jax.lax.exp,
+    kernel_fn=jax.nn.relu,
     lax_scan_unroll=16)
   config.batch_size = 8
   config.learning_rate = 0.005

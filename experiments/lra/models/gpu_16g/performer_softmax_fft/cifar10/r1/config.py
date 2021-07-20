@@ -14,9 +14,12 @@
 
 """Configuration and hyperparameter sweeps."""
 
-from fast_self_attention import fast_self_attention as favor
-import jax
+import functools
 
+from fast_self_attention import fast_self_attention as favor
+import jax_spe as spe
+
+from lra_benchmarks.models.layers.spe import make_spe_transform_fn
 from lra_benchmarks.image.configs.cifar10 import base_cifar10_config
 from lra_benchmarks.image.configs.cifar10.base_cifar10_config import TRAIN_EXAMPLES, VALID_EXAMPLES
 
@@ -31,7 +34,7 @@ def get_config():
   config.model_type = "transformer"
   config.learning_rate = .00025
   config.batch_size = 96
-  config.eval_frequency = TRAIN_EXAMPLES // config.batch_size
+  config.eval_frequency = 4 * TRAIN_EXAMPLES // config.batch_size
   config.num_train_steps = (TRAIN_EXAMPLES // config.batch_size) * NUM_EPOCHS
   config.num_eval_steps = VALID_EXAMPLES // config.batch_size
   config.factors = 'constant * linear_warmup * cosine_decay'
@@ -46,24 +49,22 @@ def get_config():
   config.model.mlp_dim = 128
   config.model.num_heads = 8
   config.model.classifier_pool = "CLS"
-
-  config.attention_fn = favor.make_fast_generalized_attention(
-    qkv_dim=config.model.qkv_dim // config.model.num_heads,
-    features_type='deterministic',
-    kernel_fn=jax.lax.exp,
-    lax_scan_unroll=16)
-
+  config.model.add_pos_emb=False
+  num_realizations = 32
   config.model_kwargs = dict(
     pos_bias_cfg=dict(
-      pos_bias_type="fft_2d",
+      pos_bias_type="fft",
       bias_base_type="full",
       lm=False,
       has_bos=False,
       has_eos=True,
-      num_attention_heads=config.model.num_heads,
+      num_attention_heads=config.num_heads,
       max_seq_len=32 * 32 * 3
     ),
   )
+  config.attention_fn = favor.make_fast_softmax_attention(
+    qkv_dim=num_realizations,
+    lax_scan_unroll=16)
   return config
 
 
