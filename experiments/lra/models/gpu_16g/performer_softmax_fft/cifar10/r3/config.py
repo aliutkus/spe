@@ -14,12 +14,8 @@
 
 """Configuration and hyperparameter sweeps."""
 
-import functools
-
 from fast_self_attention import fast_self_attention as favor
-import jax_spe as spe
 
-from lra_benchmarks.models.layers.spe import make_spe_transform_fn
 from lra_benchmarks.image.configs.cifar10 import base_cifar10_config
 from lra_benchmarks.image.configs.cifar10.base_cifar10_config import TRAIN_EXAMPLES, VALID_EXAMPLES
 
@@ -30,11 +26,11 @@ NUM_EPOCHS = 200
 def get_config():
   """Get the hyperparameter configuration."""
   config = base_cifar10_config.get_config()
-  config.random_seed = 2
+  config.random_seed = 0
   config.model_type = "transformer"
   config.learning_rate = .00025
   config.batch_size = 96
-  config.eval_frequency = 4 * TRAIN_EXAMPLES // config.batch_size
+  config.eval_frequency = TRAIN_EXAMPLES // config.batch_size
   config.num_train_steps = (TRAIN_EXAMPLES // config.batch_size) * NUM_EPOCHS
   config.num_eval_steps = VALID_EXAMPLES // config.batch_size
   config.factors = 'constant * linear_warmup * cosine_decay'
@@ -49,8 +45,10 @@ def get_config():
   config.model.mlp_dim = 128
   config.model.num_heads = 8
   config.model.classifier_pool = "CLS"
-  config.model.add_pos_emb=False
-  num_realizations = 32
+
+  config.attention_fn = favor.make_fast_softmax_attention(
+    qkv_dim=config.model.qkv_dim // config.model.num_heads,
+    lax_scan_unroll=16)
   config.model_kwargs = dict(
     pos_bias_cfg=dict(
       pos_bias_type="fft",
@@ -62,9 +60,6 @@ def get_config():
       max_seq_len=32 * 32 * 3
     ),
   )
-  config.attention_fn = favor.make_fast_softmax_attention(
-    qkv_dim=num_realizations,
-    lax_scan_unroll=16)
   return config
 
 

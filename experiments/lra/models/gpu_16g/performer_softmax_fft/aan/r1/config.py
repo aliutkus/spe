@@ -13,12 +13,8 @@
 # limitations under the License.
 """Configuration and hyperparameter sweeps."""
 
-import functools
-
 from fast_self_attention import fast_self_attention as favor
-import jax_spe as spe
 
-from lra_benchmarks.models.layers.spe import make_spe_transform_fn
 from lra_benchmarks.matching.configs import base_match_config
 
 
@@ -27,7 +23,15 @@ def get_config():
   config = base_match_config.get_config()
   config.random_seed = 0
   config.model_type = "transformer"
-  num_realizations = 64
+  config.attention_fn = favor.make_fast_softmax_attention(
+    qkv_dim=config.qkv_dim // config.num_heads,
+    lax_scan_unroll=16)
+  config.batch_size = 8
+  config.learning_rate = 0.005
+  config.num_train_steps = 15000
+  config.warmup = 3000
+  config.eval_frequency = 1500
+
   config.model_kwargs = dict(
     pos_bias_cfg=dict(
       pos_bias_type="fft",
@@ -39,14 +43,6 @@ def get_config():
       max_seq_len=config.max_length
     ),
   )
-  config.attention_fn = favor.make_fast_softmax_attention(
-    qkv_dim=num_realizations,
-    lax_scan_unroll=16)
-  config.batch_size = 8
-  config.learning_rate = 0.005
-  config.num_train_steps = 15000
-  config.warmup = 3000
-  config.eval_frequency = 1500
   return config
 
 

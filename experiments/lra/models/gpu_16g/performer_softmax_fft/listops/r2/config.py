@@ -13,23 +13,23 @@
 # limitations under the License.
 """Configuration and hyperparameter sweeps."""
 
-import functools
-
 from fast_self_attention import fast_self_attention as favor
-import jax_spe as spe
 
-from lra_benchmarks.models.layers.spe import make_spe_transform_fn
 from lra_benchmarks.listops.configs import base_listops_config
 
 
 def get_config():
   """Get the default hyperparameter configuration."""
   config = base_listops_config.get_config()
-  config.random_seed = 1
+  config.random_seed = 0
   config.model_type = "transformer"
   config.attention_fn = favor.make_fast_softmax_attention(
     qkv_dim=config.qkv_dim // config.num_heads,
     lax_scan_unroll=16)
+  config.batch_size = 8
+  config.learning_rate = config.learning_rate / 32 * 8
+  config.num_train_steps = 10000
+
   config.model_kwargs = dict(
     pos_bias_cfg=dict(
       pos_bias_type="fft",
@@ -41,9 +41,6 @@ def get_config():
       max_seq_len=config.max_length
     ),
   )
-  config.batch_size = 8
-  config.learning_rate = config.learning_rate / 32 * 8
-  config.num_train_steps = 10000
   return config
 
 

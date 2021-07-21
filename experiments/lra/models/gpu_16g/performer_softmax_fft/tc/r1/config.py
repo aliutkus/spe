@@ -13,12 +13,8 @@
 # limitations under the License.
 """Configuration and hyperparameter sweeps."""
 
-import functools
-
 from fast_self_attention import fast_self_attention as favor
-import jax_spe as spe
 
-from lra_benchmarks.models.layers.spe import make_spe_transform_fn
 from lra_benchmarks.text_classification.configs import base_tc_config
 
 
@@ -30,6 +26,10 @@ def get_config():
   config.attention_fn = favor.make_fast_softmax_attention(
     qkv_dim=config.qkv_dim // config.num_heads,
     lax_scan_unroll=16)
+  config.batch_size = config.batch_size // 2
+  config.learning_rate = config.learning_rate / 2
+  config.num_train_steps = 30000
+
   config.model_kwargs = dict(
     pos_bias_cfg=dict(
       pos_bias_type="fft",
@@ -41,9 +41,6 @@ def get_config():
       max_seq_len=config.max_length
     ),
   )
-  config.batch_size = 8
-  config.learning_rate = config.learning_rate / 32 * 8
-  config.num_train_steps = 30000
   return config
 
 
