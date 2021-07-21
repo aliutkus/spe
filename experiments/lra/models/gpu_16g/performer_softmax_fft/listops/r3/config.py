@@ -21,7 +21,7 @@ from lra_benchmarks.listops.configs import base_listops_config
 def get_config():
   """Get the default hyperparameter configuration."""
   config = base_listops_config.get_config()
-  config.random_seed = 0
+  config.random_seed = 2
   config.model_type = "transformer"
   config.attention_fn = favor.make_fast_softmax_attention(
     qkv_dim=config.qkv_dim // config.num_heads,

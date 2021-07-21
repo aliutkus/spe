@@ -27,7 +27,7 @@ NUM_EPOCHS = 200
 def get_config():
   """Get the hyperparameter configuration."""
   config = base_cifar10_config.get_config()
-  config.random_seed = 0
+  config.random_seed = 1
   config.model_type = "transformer"
   config.learning_rate = .00025
   config.batch_size = 96

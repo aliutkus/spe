@@ -22,7 +22,7 @@ from lra_benchmarks.text_classification.configs import base_tc_config
 def get_config():
   """Get the default hyperparameter configuration."""
   config = base_tc_config.get_config()
-  config.random_seed = 0
+  config.random_seed = 1
   config.model_type = "transformer"
   config.attention_fn = favor.make_fast_generalized_attention(
     qkv_dim=config.qkv_dim // config.num_heads,
