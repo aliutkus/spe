@@ -56,7 +56,7 @@ def get_config():
       lm=False,
       has_bos=False,
       has_eos=True,
-      num_attention_heads=config.num_heads,
+      num_attention_heads=config.model.num_heads,
       max_seq_len=32 * 32 * 3,
       n_channels=3,
     ),
