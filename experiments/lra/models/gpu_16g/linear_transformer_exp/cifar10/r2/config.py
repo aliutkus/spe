@@ -50,7 +50,7 @@ def get_config():
   config.attention_fn = favor.make_fast_generalized_attention(
     qkv_dim=config.model.qkv_dim // config.model.num_heads,
     features_type='deterministic',
-    kernel_fn=jax.nn.exp,
+    kernel_fn=jax.lax.exp,
     lax_scan_unroll=16)
   return config
 
