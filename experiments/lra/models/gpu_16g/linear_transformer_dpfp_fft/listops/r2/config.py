@@ -21,7 +21,7 @@ from lra_benchmarks.listops.configs import base_listops_config
 def dpfp(x, nu=1):
   x = jax.numpy.concatenate([jax.nn.relu(x), jax.nn.relu(-x)], axis=-1)
   x_rolled = jax.numpy.concatenate([jax.numpy.roll(x, shift=j, axis=-1) for j in range(1, nu + 1)], axis=-1)
-  x_repeat = jax.numpy.concatenate([x] * nu, dim=-1)
+  x_repeat = jax.numpy.concatenate([x] * nu, axis=-1)
   return x_repeat * x_rolled
 
 def get_config():
