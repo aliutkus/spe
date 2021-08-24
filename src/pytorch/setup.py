@@ -29,4 +29,8 @@ setup(
     install_requires=[
         'torch>=1.7',
     ],
-    )
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+    ]
+)

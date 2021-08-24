@@ -22,4 +22,8 @@ setup(
     install_requires=[
         'jax>=0.2.6',
     ],
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+    ]
 )
