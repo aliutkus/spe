@@ -66,8 +66,8 @@ def get_config():
       has_bos=False,
       has_eos=True,
       num_attention_heads=config.model.num_heads,
-      max_seq_len=32 * 32 * 3,
-      n_channels=3,
+      max_seq_len=32 * 32 + 1,
+      n_channels=1,
     ),
   )
   return config
