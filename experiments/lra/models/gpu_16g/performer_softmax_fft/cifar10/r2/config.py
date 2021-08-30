@@ -51,7 +51,7 @@ def get_config():
     lax_scan_unroll=16)
   config.model_kwargs = dict(
     pos_bias_cfg=dict(
-      pos_bias_type="fft",
+      pos_bias_type="fft_2d",
       bias_base_type="full",
       lm=False,
       has_bos=False,
