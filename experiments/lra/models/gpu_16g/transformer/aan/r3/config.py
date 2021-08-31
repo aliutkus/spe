@@ -13,16 +13,7 @@
 # limitations under the License.
 """Configuration and hyperparameter sweeps."""
 
-from fast_self_attention import fast_self_attention as favor
-import jax
-
 from lra_benchmarks.matching.configs import base_match_config
-
-def dpfp(x, nu=1):
-  x = jax.numpy.concatenate([jax.nn.relu(x), jax.nn.relu(-x)], axis=-1)
-  x_rolled = jax.numpy.concatenate([jax.numpy.roll(x, shift=j, axis=-1) for j in range(1, nu + 1)], axis=-1)
-  x_repeat = jax.numpy.concatenate([x] * nu, axis=-1)
-  return x_repeat * x_rolled
 
 def get_config():
   """Get the default hyperparameter configuration."""

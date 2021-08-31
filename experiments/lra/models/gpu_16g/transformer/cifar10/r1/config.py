@@ -14,20 +14,11 @@
 
 """Configuration and hyperparameter sweeps."""
 
-from fast_self_attention import fast_self_attention as favor
-import jax
-
 from lra_benchmarks.image.configs.cifar10 import base_cifar10_config
 from lra_benchmarks.image.configs.cifar10.base_cifar10_config import TRAIN_EXAMPLES, VALID_EXAMPLES
 
 
 NUM_EPOCHS = 200
-
-def dpfp(x, nu=1):
-  x = jax.numpy.concatenate([jax.nn.relu(x), jax.nn.relu(-x)], axis=-1)
-  x_rolled = jax.numpy.concatenate([jax.numpy.roll(x, shift=j, axis=-1) for j in range(1, nu + 1)], axis=-1)
-  x_repeat = jax.numpy.concatenate([x] * nu, axis=-1)
-  return x_repeat * x_rolled
 
 def get_config():
   """Get the hyperparameter configuration."""
