@@ -1,6 +1,7 @@
 flax==0.2.2
 gin-config==0.4.0
 ml-collections==0.1.0
-tensorboard==2.4.0
-tensorflow==2.3.1
+tensorboard==2.5.0
+tbp-nightly
+tensorflow==2.4.1
 tensorflow-datasets==4.1.0
