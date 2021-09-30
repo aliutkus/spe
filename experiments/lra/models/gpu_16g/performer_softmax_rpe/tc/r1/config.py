@@ -32,12 +32,7 @@ def get_config():
 
   config.model_kwargs = dict(
     pos_bias_cfg=dict(
-      pos_bias_type="fft",
-      bias_base_type="full",
-      lm=False,
-      has_bos=False,
-      has_eos=True,
-      num_attention_heads=config.num_heads,
+      pos_bias_type="relative_key_query",
       max_seq_len=config.max_length
     ),
   )
