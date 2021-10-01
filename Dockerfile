@@ -34,4 +34,4 @@ RUN git clone https://github.com/maximzubkov/positional-bias.git
 RUN cd positional-bias && pip install .
 
 RUN pip install --upgrade jaxlib==0.1.68+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
-RUN pip install -r experiments/lra/requirements.txt
+RUN pip install -r lra/requirements.txt
