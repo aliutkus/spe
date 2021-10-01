@@ -25,7 +25,7 @@ COPY . /spe
 
 RUN python -m pip install --upgrade pip
 RUN git submodule init && git submodule update
-RUN cd experiments/lra && pip install ./fast_attention ./long-range-arena ../../src/jax
+RUN cd lra && pip install ./fast_attention ./long-range-arena ../src/jax
 
 ARG GIT_TOKEN
 RUN git config --global url."https://${GIT_TOKEN}:@github.com/".insteadOf "https://github.com/"
