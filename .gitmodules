@@ -1,6 +1,3 @@
-[submodule "experiments/lra/long-range-arena"]
-	path = experiments/lra/long-range-arena
+[submodule "lra/long-range-arena"]
+	path = lra/long-range-arena
 	url = https://github.com/maximzubkov/long-range-arena.git
-[submodule "experiments/groove/lib/fast-transformers"]
-	path = experiments/groove/lib/fast-transformers
-	url = https://github.com/cifkao/fast-transformers.git
