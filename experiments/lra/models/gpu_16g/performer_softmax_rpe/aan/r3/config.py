@@ -35,7 +35,7 @@ def get_config():
   config.model_kwargs = dict(
     pos_bias_cfg=dict(
       pos_bias_type="relative_key_query",
-      max_seq_len=config.max_length
+      max_seq_len=config.max_length - 1
     ),
   )
   return config
