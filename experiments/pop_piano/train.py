@@ -129,8 +129,8 @@ def validate(model, dloader, rounds=3):
     for r in range(rounds):
       print (' >> validating ... (round {})'.format(r+1))
       for batch_idx, batch_samples in enumerate(dloader):
-        batch_dec_inp = batch_samples['dec_input'].cuda(gpuid).permute(1, 0)
-        batch_dec_tgt = batch_samples['dec_target'].cuda(gpuid).permute(1, 0)
+        batch_dec_inp = batch_samples['dec_input'].cuda(gpuid)
+        batch_dec_tgt = batch_samples['dec_target'].cuda(gpuid)
 
         omit_feature_map_draw = random.random() > redraw_prob
         dec_logits = model(
