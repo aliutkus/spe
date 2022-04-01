@@ -282,14 +282,14 @@ class ConvSPE(nn.Module):
         qbar = self.conv_k(z)
 
         # truncate to desired shape (remove the start to avoid the border effects)
+        indices = [slice(batchsize * num_realizations), slice(self.num_heads * self.in_features)]
         for dim in range(len(shape)):
             k = self.kernel_size[dim]
             s = original_shape[dim]
+            indices.append(slice(k, k + s, 1))
 
-            indices = [slice(batchsize*num_realizations),
-                       slice(self.num_heads*self.in_features)] + [slice(k, k+s, 1), ]
-            qbar = qbar[indices]
-            kbar = kbar[indices]
+        qbar = qbar[indices]
+        kbar = kbar[indices]
 
         # making (batchsize, num_realizations, num_heads, keys_dim, *shape)
         kbar = kbar.view(batchsize, num_realizations,
